@@ -1,0 +1,39 @@
+; Chapter 6 — Sarsa on the windy gridworld (Example 6.5).
+; ε = 0.1, α = 0.5, γ = 1, Q initialised to 0. Prints how many episodes were
+; finished by each 1000 time steps (the book's figure shows ~170 episodes in
+; ~8000 steps) and the greedy path after training (optimal length 15).
+;
+; Knobs: RL_EPISODES (default 170), RL_SEED.
+
+(require "rl/rng" all:)
+(require "rl/knobs" all:)
+(require "envs/gridworld" all:)
+(require "envs/windy" all:)
+(require "algos/td" all:)
+
+(define episodes (env-int "RL_EPISODES" 170))
+(rng-seed! (env-int "RL_SEED" 2026))
+
+(define q (make-vector (* wg-rows wg-cols 4) 0.0))
+
+(display "Example 6.5 — Sarsa on the windy gridworld, episodes=") (display episodes) (newline)
+(display "  time steps   episodes finished") (newline)
+(define total-steps
+  (let lp ((i 0) (t 0) (mark 1000))
+    (if (< i episodes)
+        (let ((t2 (+ t (cadr (td-control-episode! 'sarsa q wg-step wg-start 4 0.1 0.5 1.0)))))
+          (let mk ((m mark))
+            (if (<= m t2)
+                (begin (display (string-pad-left (number->string m) 12))
+                       (display (string-pad-left (number->string i) 20)) (newline)
+                       (mk (+ m 1000)))
+                (lp (+ i 1) t2 m))))
+        t)))
+(display "total steps for ") (display episodes) (display " episodes: ") (display total-steps) (newline)
+
+(define path (td-greedy-path q wg-step wg-start 4 100))
+(display "greedy path length: ") (display (- (length path) 1)) (newline)
+(display "greedy policy (G = goal):") (newline)
+(gw-print-policy (lambda (s) (if (= s wg-goal) "G" (gw-action-char (q-argmax q 4 s))))
+                 wg-rows wg-cols)
+(display "done") (newline)

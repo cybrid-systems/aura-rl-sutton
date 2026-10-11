@@ -1,0 +1,58 @@
+; Chapter 5 — Monte Carlo prediction on blackjack (Example 5.1, Figure 5.1).
+; Policy: stick on 20 or 21, otherwise hit. Prints v_π after RL_EPISODES
+; episodes (first-visit), checks every-visit gives the same table, and
+; reports the RMS error against the exact values (lib/oracle).
+;
+; Knobs: RL_EPISODES (default 10000; the book also shows 500000), RL_SEED.
+
+(require "rl/rng" all:)
+(require "rl/vec" all:)
+(require "rl/knobs" all:)
+(require "envs/blackjack" all:)
+(require "algos/mc" all:)
+(require "oracle/blackjack-exact" all:)
+
+(define episodes (env-int "RL_EPISODES" 10000))
+(define seed (env-int "RL_SEED" 2026))
+
+; rows: player sum 21 down to 12; columns: dealer card A..10
+(define (print-grid v usable d)
+  (display "   sum |      A      2      3      4      5      6      7      8      9     10") (newline)
+  (let lp ((sum 21))
+    (if (>= sum 12)
+        (begin
+          (display (string-pad-left (number->string sum) 6)) (display " |")
+          (let lpd ((show 1))
+            (if (<= show 10)
+                (begin (display (fmt (vector-ref v (bj-state-index sum usable show)) d))
+                       (lpd (+ show 1)))
+                #f))
+          (newline)
+          (lp (- sum 1)))
+        #f)))
+
+(define (rms v lo hi)
+  (let lp ((s lo) (acc 0.0))
+    (if (< s hi)
+        (let ((e (- (vector-ref v s) (vector-ref bj-exact-v20 s))))
+          (lp (+ s 1) (+ acc (* e e))))
+        (sqrt (/ acc (- hi lo))))))
+
+(define (same? a b)
+  (let lp ((i 0))
+    (if (>= i (vector-length a)) #t
+        (if (= (vector-ref a i) (vector-ref b i)) (lp (+ i 1)) #f))))
+
+(rng-seed! seed)
+(define fv (car (mc-bj-predict! bj-stick-20-policy episodes #t)))
+(rng-seed! seed)
+(define ev (car (mc-bj-predict! bj-stick-20-policy episodes #f)))
+
+(display "Figure 5.1 — v_pi (stick on 20/21), first-visit MC, episodes=") (display episodes) (newline)
+(display "-- usable ace") (newline)
+(print-grid fv #t 2)
+(display "-- no usable ace") (newline)
+(print-grid fv #f 2)
+(display "every-visit == first-visit (same seed): ") (display (same? fv ev)) (newline)
+(display "RMS vs exact: no usable ace=") (display (round-to (rms fv 0 100) 3))
+(display "  usable ace=") (display (round-to (rms fv 100 200) 3)) (newline)

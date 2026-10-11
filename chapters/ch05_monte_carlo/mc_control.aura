@@ -1,0 +1,77 @@
+; Chapter 5 — Monte Carlo control on blackjack.
+;   Figure 5.2: Monte Carlo ES (exploring starts) → π_* and v_*.
+;   Section 5.4: on-policy first-visit MC control with an ε-soft policy.
+; Both learned greedy policies are compared with the exact optimal policy
+; (lib/oracle) and scored by their mean return over fresh deals.
+;
+; Knobs: RL_EPISODES (default 50000; the book uses 500000), RL_EPS (0.1),
+;        RL_EVAL (deals used to score a policy, default 5000), RL_SEED.
+
+(require "rl/rng" all:)
+(require "rl/vec" all:)
+(require "rl/knobs" all:)
+(require "envs/blackjack" all:)
+(require "algos/mc" all:)
+(require "oracle/blackjack-exact" all:)
+
+(define episodes (env-int "RL_EPISODES" 50000))
+(define eps (env-float "RL_EPS" 0.1))
+(define n-eval (env-int "RL_EVAL" 5000))
+(rng-seed! (env-int "RL_SEED" 2026))
+
+(define (print-policy pi usable)
+  (display "   sum |  A  2  3  4  5  6  7  8  9 10") (newline)
+  (let lp ((sum 21))
+    (if (>= sum 12)
+        (begin
+          (display (string-pad-left (number->string sum) 6)) (display " |")
+          (let lpd ((show 1))
+            (if (<= show 10)
+                (begin (display (if (= 1 (vector-ref pi (bj-state-index sum usable show))) "  H" "  S"))
+                       (lpd (+ show 1)))
+                #f))
+          (newline)
+          (lp (- sum 1)))
+        #f)))
+
+(define (agree pi lo hi)
+  (let lp ((s lo) (n 0))
+    (if (< s hi)
+        (lp (+ s 1) (if (= (vector-ref pi s) (vector-ref bj-exact-pistar s)) (+ n 1) n))
+        n)))
+
+; v(s) = max_a Q(s, a)
+(define (q->v q)
+  (let ((v (make-vector bj-num-states 0.0)))
+    (let lp ((s 0))
+      (if (< s bj-num-states)
+          (begin (vector-set! v s (max (vector-ref q (* 2 s)) (vector-ref q (+ 1 (* 2 s)))))
+                 (lp (+ s 1)))
+          #f))
+    v))
+
+(define (policy-of pi)
+  (lambda (sum usable show) (mc-index-act (vector-ref pi (bj-state-index sum usable show)))))
+
+(define (report label pi)
+  (display label) (display ": agrees with exact pi_* on ")
+  (display (agree pi 0 100)) (display "/100 no-ace and ")
+  (display (agree pi 100 200)) (display "/100 usable-ace states; mean return over ")
+  (display n-eval) (display " deals = ")
+  (display (round-to (mc-bj-mean-return! (policy-of pi) n-eval) 3)) (newline))
+
+(define es (mc-bj-es! episodes))
+(display "Figure 5.2 — Monte Carlo ES, episodes=") (display episodes) (newline)
+(display "-- pi_* usable ace (H = hit, S = stick)") (newline)
+(print-policy (car es) #t)
+(display "-- pi_* no usable ace") (newline)
+(print-policy (car es) #f)
+(define v-es (q->v (cadr es)))
+(display "v_*(21, no ace, dealer 10) = ") (display (round-to (vector-ref v-es (bj-state-index 21 #f 10)) 3))
+(display "  (exact ") (display (round-to (vector-ref bj-exact-vstar (bj-state-index 21 #f 10)) 3)) (display ")") (newline)
+(report "MC ES" (car es))
+
+(define soft (mc-bj-eps-soft! episodes eps))
+(display "Section 5.4 — on-policy first-visit MC control, eps=") (display eps) (newline)
+(report "eps-soft greedy" (car soft))
+(display "reference mean returns (exact): stick-20 = -0.354, optimal = -0.047") (newline)

@@ -1,0 +1,220 @@
+; algos/td.aura — temporal-difference learning (Sutton & Barto, Chapter 6).
+;
+; Prediction: TD(0) and constant-α MC on the random walk (Example 6.2).
+; Control: Sarsa, Q-learning, Expected Sarsa (Sec 6.4–6.6) and Double
+; Q-learning (Sec 6.7) on any episodic tabular env given as
+;   (step s a) → (list s' reward done?)
+; Q is a flat vector, Q[s*nA + a].
+
+(require "rl/rng" all:)
+(require "rl/vec" all:)
+(require "rl/tuple" all:)
+(require "envs/random-walk" all:)
+
+(export td-rw-rms! td-rw-values! q-get q-argmax q-argmax-tie! q-eps-greedy! q-max
+        td-control-episode! td-greedy-path td-maxbias-run!)
+
+; ---------------------------------------------------------------------------
+; Random-walk prediction.
+
+(define (rms-error v truth n)
+  (let lp ((s 1) (acc 0.0))
+    (if (<= s n)
+        (let ((d (- (vector-ref v s) (vector-ref truth s))))
+          (lp (+ s 1) (+ acc (* d d))))
+        (sqrt (/ acc n)))))
+
+(define (rw-init n)
+  (let ((v (make-vector (+ n 2) 0.0)))
+    (let lp ((s 1))
+      (if (<= s n) (begin (vector-set! v s 0.5) (lp (+ s 1))) #f))
+    v))
+
+; One episode. method: 'td or 'mc. Updates v in place.
+(define (rw-episode! v n method alpha)
+  (let lp ((s (rw-start n)) (visited '()))
+    (let* ((st (rw-step! s n 0))
+           (s2 (car st))
+           (r (cadr st))
+           (done (car (cddr st))))
+      (if (equal? method 'td)
+          (let ((target (+ r (if done 0.0 (vector-ref v s2)))))
+            (vec-add-at! v s (* alpha (- target (vector-ref v s))))
+            (if done #t (lp s2 '())))
+          (if done
+              ; constant-α MC (every-visit), G = final reward, γ = 1
+              (let up ((l (cons s visited)))
+                (if (null? l)
+                    #t
+                    (begin
+                      (vec-add-at! v (car l) (* alpha (- r (vector-ref v (car l)))))
+                      (up (cdr l)))))
+              (lp s2 (cons s visited)))))))
+
+; Average RMS error (over runs) after 0..episodes episodes. → vector length episodes+1
+(define (td-rw-rms! method alpha runs episodes)
+  (let ((n 5)
+        (out (make-vector (+ episodes 1) 0.0)))
+    (let ((truth (rw-true-values n 0)))
+      (let run ((k 0))
+        (if (< k runs)
+            (let ((v (rw-init n)))
+              (vec-add-at! out 0 (rms-error v truth n))
+              (let ep ((i 1))
+                (if (<= i episodes)
+                    (begin
+                      (rw-episode! v n method alpha)
+                      (vec-add-at! out i (rms-error v truth n))
+                      (ep (+ i 1)))
+                    #f))
+              (run (+ k 1)))
+            #f)))
+    (vec-scale! out (/ 1.0 runs))))
+
+; TD(0) values after `episodes` episodes of one run (left panel of Ex 6.2).
+(define (td-rw-values! alpha episodes)
+  (let ((v (rw-init 5)))
+    (let ep ((i 0))
+      (if (< i episodes) (begin (rw-episode! v 5 'td alpha) (ep (+ i 1))) #f))
+    v))
+
+; ---------------------------------------------------------------------------
+; Tabular control.
+
+(define (q-get q nA s a) (vector-ref q (+ (* s nA) a)))
+
+(define (q-max q nA s)
+  (let lp ((a 1) (m (q-get q nA s 0)))
+    (if (< a nA) (lp (+ a 1) (max m (q-get q nA s a))) m)))
+
+(define (q-mean q nA s)
+  (let lp ((a 0) (acc 0.0))
+    (if (< a nA) (lp (+ a 1) (+ acc (q-get q nA s a))) (/ acc nA))))
+
+; first maximal action (deterministic; used for printing greedy paths)
+(define (q-argmax q nA s)
+  (let lp ((a 1) (best 0))
+    (if (< a nA)
+        (lp (+ a 1) (if (> (q-get q nA s a) (q-get q nA s best)) a best))
+        best)))
+
+; maximal action, ties broken uniformly at random
+(define (q-argmax-tie! q nA s)
+  (let ((m (q-max q nA s)))
+    (let lp ((a 0) (cnt 0) (pick 0))
+      (if (< a nA)
+          (if (= (q-get q nA s a) m)
+              (let ((c (+ cnt 1)))
+                (lp (+ a 1) c (if (= (rng-int! c) 0) a pick)))
+              (lp (+ a 1) cnt pick))
+          pick))))
+
+(define (q-eps-greedy! q nA s eps)
+  (if (< (rng-uniform!) eps) (rng-int! nA) (q-argmax-tie! q nA s)))
+
+; One episode of Sarsa / Q-learning / Expected Sarsa.
+; method: 'sarsa | 'q | 'expected. → (list total-reward steps)
+(define (td-control-episode! method q step start nA eps alpha gamma)
+  (let lp ((s start) (a (q-eps-greedy! q nA start eps)) (total 0) (steps 0))
+    (let* ((res (step s a))
+           (s2 (car res))
+           (r (cadr res))
+           (done (car (cddr res)))
+           (a2 (if done 0 (q-eps-greedy! q nA s2 eps)))
+           (next (if done
+                     0.0
+                     (if (equal? method 'sarsa)
+                         (q-get q nA s2 a2)
+                         (if (equal? method 'q)
+                             (q-max q nA s2)
+                             ; expectation under the ε-greedy policy
+                             (+ (* (- 1.0 eps) (q-max q nA s2))
+                                (* eps (q-mean q nA s2)))))))
+           (i (+ (* s nA) a)))
+      (vector-set! q i (+ (vector-ref q i)
+                          (* alpha (- (+ r (* gamma next)) (vector-ref q i)))))
+      (if done
+          (tup2 (+ total r) (+ steps 1))
+          (lp s2 a2 (+ total r) (+ steps 1))))))
+
+; Greedy rollout (first-max ties) → list of states, capped at max-steps.
+(define (td-greedy-path q step start nA max-steps)
+  (let lp ((s start) (k 0) (acc (cons start '())))
+    (if (>= k max-steps)
+        (tup-reverse acc)
+        (let ((res (step s (q-argmax q nA s))))
+          (if (car (cddr res))
+              (tup-reverse (cons (car res) acc))
+              (lp (car res) (+ k 1) (cons (car res) acc)))))))
+
+; ---------------------------------------------------------------------------
+; Maximization bias (Example 6.7). States: A = 0, B = 1. From A: action 0
+; (right) ends with 0, action 1 (left) goes to B with 0. From B every one of
+; nB actions ends with reward ~ N(-0.1, 1). Q-learning vs Double Q-learning,
+; ε = 0.1, α = 0.1, γ = 1. → vector: fraction of runs taking `left` in A, per episode.
+
+(define (mb-nA s nB) (if (= s 0) 2 nB))
+
+; Q tables are vectors of length 2 + nB: [A-right A-left B-0 .. B-(nB-1)]
+(define (mb-idx s a) (if (= s 0) a (+ 2 a)))
+
+(define (mb-argmax-tie! q s nB)
+  (let* ((n (mb-nA s nB))
+         (m (let lp ((a 1) (m (vector-ref q (mb-idx s 0))))
+              (if (< a n) (lp (+ a 1) (max m (vector-ref q (mb-idx s a)))) m))))
+    (let lp ((a 0) (cnt 0) (pick 0))
+      (if (< a n)
+          (if (= (vector-ref q (mb-idx s a)) m)
+              (let ((c (+ cnt 1))) (lp (+ a 1) c (if (= (rng-int! c) 0) a pick)))
+              (lp (+ a 1) cnt pick))
+          pick))))
+
+(define (mb-max q s nB) (vector-ref q (mb-idx s (mb-argmax-tie! q s nB))))
+
+(define (mb-sum2 q1 q2)
+  (let ((out (make-vector (vector-length q1) 0.0)))
+    (let lp ((i 0))
+      (if (< i (vector-length q1))
+          (begin (vector-set! out i (+ (vector-ref q1 i) (vector-ref q2 i))) (lp (+ i 1)))
+          #f))
+    out))
+
+(define (mb-act! q s nB eps)
+  (if (< (rng-uniform!) eps) (rng-int! (mb-nA s nB)) (mb-argmax-tie! q s nB)))
+
+; One episode; double? selects Double Q-learning. → #t if A chose left.
+(define (mb-episode! q1 q2 double? nB eps alpha)
+  (let lp ((s 0) (left? #f))
+    (let* ((behave (if double? (mb-sum2 q1 q2) q1))
+           (a (mb-act! behave s nB eps))
+           (went-left (if (= s 0) (= a 1) left?))
+           (done (if (= s 0) (= a 0) #t))
+           (r (if (= s 0) 0.0 (rng-normal! -0.1 1.0)))
+           (s2 1)
+           (swap (if double? (= (rng-int! 2) 1) #f))
+           (qa (if swap q2 q1))          ; table being updated
+           (qb (if swap q1 q2))          ; table used to evaluate
+           (next (if done
+                     0.0
+                     (if double?
+                         (vector-ref qb (mb-idx s2 (mb-argmax-tie! qa s2 nB)))
+                         (mb-max qa s2 nB))))
+           (i (mb-idx s a)))
+      (vector-set! qa i (+ (vector-ref qa i) (* alpha (- (+ r next) (vector-ref qa i)))))
+      (if done went-left (lp s2 went-left)))))
+
+(define (td-maxbias-run! double? runs episodes nB)
+  (let ((out (make-vector episodes 0.0)))
+    (let run ((k 0))
+      (if (< k runs)
+          (let ((q1 (make-vector (+ 2 nB) 0.0))
+                (q2 (make-vector (+ 2 nB) 0.0)))
+            (let ep ((i 0))
+              (if (< i episodes)
+                  (begin
+                    (if (mb-episode! q1 q2 double? nB 0.1 0.1) (vec-add-at! out i 1.0) #f)
+                    (ep (+ i 1)))
+                  #f))
+            (run (+ k 1)))
+          #f))
+    (vec-scale! out (/ 1.0 runs))))

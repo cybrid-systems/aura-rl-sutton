@@ -1,0 +1,52 @@
+; Chapter 5 — off-policy Monte Carlo prediction.
+;   Figure 5.3: ordinary vs weighted importance sampling for the blackjack
+;   state (sum 13, usable ace, dealer 2); behaviour = uniform random,
+;   target = stick on 20/21; true value -0.27726 (book).
+;   Figure 5.4: ordinary importance sampling on the one-state MDP with
+;   infinite variance; estimates do not settle on v_π(s) = 1.
+;
+; Knobs: RL_RUNS (default 20; book 100), RL_EPISODES (default 1000; book 10000),
+;        RL_IV_RUNS (default 5), RL_IV_EPISODES (default 10000), RL_SEED.
+
+(require "rl/rng" all:)
+(require "rl/vec" all:)
+(require "rl/knobs" all:)
+(require "algos/mc" all:)
+
+(define runs (env-int "RL_RUNS" 20))
+(define episodes (env-int "RL_EPISODES" 1000))
+(define iv-runs (env-int "RL_IV_RUNS" 5))
+(define iv-episodes (env-int "RL_IV_EPISODES" 10000))
+(rng-seed! (env-int "RL_SEED" 2026))
+
+(define truth -0.27726)
+(define res (mc-bj-off-policy! runs episodes truth))
+
+(display "Figure 5.3 — mean squared error over ") (display runs) (display " runs") (newline)
+(display "  episodes   ordinary IS   weighted IS") (newline)
+(define (row i)
+  (display (string-pad-left (number->string i) 10))
+  (display (string-pad-left (number->string (round-to (vector-ref (car res) (- i 1)) 4)) 14))
+  (display (string-pad-left (number->string (round-to (vector-ref (cadr res) (- i 1)) 4)) 14))
+  (newline))
+(let lp ((i 1))
+  (if (<= i episodes)
+      (begin (row i) (lp (* i 10)))
+      #f))
+(if (= 0 (remainder episodes 10)) #f (row episodes))
+
+(display "Figure 5.4 — ordinary IS estimates of v_pi(s) = 1 (") (display iv-runs) (display " runs)") (newline)
+(let run ((k 0))
+  (if (< k iv-runs)
+      (let ((est (mc-inf-var! iv-episodes)))
+        (display "  run ") (display (+ k 1)) (display ":")
+        (let lp ((i 10))
+          (if (<= i iv-episodes)
+              (begin (display "  @") (display i) (display "=")
+                     (display (round-to (vector-ref est (- i 1)) 3))
+                     (lp (* i 10)))
+              #f))
+        (newline)
+        (run (+ k 1)))
+      #f))
+(display "done") (newline)

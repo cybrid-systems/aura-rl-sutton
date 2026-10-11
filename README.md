@@ -12,8 +12,8 @@ The project also works as a stress test for [Aura](https://github.com/cybrid-sys
 | 2 | Multi-armed bandits | ✅ Fig 2.2–2.5 (ε-greedy, optimistic init, UCB, gradient bandit); Fig 2.6 TODO |
 | 3 | Finite MDPs | ✅ Fig 3.2 (v_π), Fig 3.5 (v_*, π_*) |
 | 4 | Dynamic programming | ✅ 4×4 gridworld: policy evaluation, policy iteration, value iteration; car rental / gambler TODO |
-| 5 | Monte Carlo | stub (blackjack env ready) |
-| 6 | TD learning | stub (random-walk and cliff-walking envs ready) |
+| 5 | Monte Carlo | ✅ Fig 5.1–5.4, Sec 5.4: first-/every-visit MC prediction, Monte Carlo ES, ε-soft on-policy control, ordinary vs weighted importance sampling |
+| 6 | TD learning | ✅ Ex 6.2 (TD(0) vs constant-α MC), 6.5 windy gridworld (Sarsa), 6.6 cliff walking (Sarsa / Q-learning / Expected Sarsa), 6.7 maximization bias (Double Q-learning); Fig 6.2 batch updating and Fig 6.3 α sweep TODO |
 | 7 | n-step bootstrapping | stub |
 | 8 | Planning (Dyna) | stub |
 | 9 | On-policy prediction with approximation | stub |
@@ -27,7 +27,7 @@ Each `chapters/chNN_*/README.md` lists the algorithms and figures planned for th
 
 ## Aura version / 锁定的 Aura 版本
 
-Tested against Aura `main` at **`549fdd3497f666be4df89b234f7ec31e6d6fa7cf`** (2026-10-11).
+Tested against Aura `main` at **`2f815c18864f8eb0d22bdf978e472eabc40c2906`** (2026-10-11). Chapters 2–4 were first written against `549fdd3` and still pass at the new pin.
 
 All code runs on the **Soft** face:
 
@@ -45,6 +45,8 @@ export AURA_BIN=$HOME/aura/build/aura   # required; AURA_LIB defaults to $(dirna
 scripts/run_chapter.sh 2                # 10-armed testbed (RL_RUNS / RL_STEPS / RL_SEED to tune)
 scripts/run_chapter.sh 3                # 5×5 gridworld
 scripts/run_chapter.sh 4                # 4×4 gridworld DP
+scripts/run_chapter.sh 5                # blackjack MC (about 7 min at the defaults)
+scripts/run_chapter.sh 6                # TD: random walk, windy, cliff, max bias (about 19 min)
 scripts/run_tests.sh                    # oracle checks against published values
 ```
 
@@ -69,12 +71,45 @@ Chapter 2 defaults to 20 runs × 300 steps (the book uses 2000 × 1000) because 
 
 第 2 章默认 20 次 × 300 步（书中是 2000 × 1000），因为 Soft 解释器每步约 2 ms；可用 `RL_RUNS` / `RL_STEPS` 调大。
 
+## Results at the defaults / 默认参数下的结果
+
+Seed 2026, Soft face, Aura `2f815c188`, aarch64 dev container. Run sizes are smaller than the book's
+because the Soft interpreter takes about 1.5 ms per blackjack episode and file mode never frees closures
+(memory grows with the run, [#4459](https://github.com/cybrid-systems/aura/issues/4459)). Every driver has
+`RL_*` knobs to raise them.
+
+种子 2026，Soft 模式。运行规模比书中小（解释器速度 + 文件模式不回收闭包，见 #4459），可用 `RL_*` 环境变量调大。
+
+**Chapter 5 (blackjack; exact values from `lib/oracle`, a DP over the same rules)**
+
+| Driver | Result | Book / exact | Wall |
+|---|---|---|---|
+| Fig 5.1, 10 000 episodes | RMS vs exact v_π: 0.076 (no usable ace), 0.276 (usable ace); first-visit == every-visit | v(13, usable, 2) = −0.27726 | 48 s |
+| Fig 5.2, MC ES, 50 000 episodes | greedy policy agrees with exact π_* on 92/100 (no ace) and 98/100 (usable ace) states; mean return −0.046 | optimal −0.047, stick-20 −0.354 | 284 s (with ε-soft) |
+| Sec 5.4, ε-soft (ε = 0.1), 50 000 episodes | 91/100 and 86/100 states; mean return −0.037 | — | |
+| Fig 5.3, 20 runs | MSE at 1 / 10 / 100 / 1 000 episodes: ordinary IS 6.03 / 1.80 / 0.162 / 0.0119, weighted IS 0.244 / 0.778 / 0.129 / 0.0096 | weighted IS lower early | 68 s |
+| Fig 5.4 | ordinary IS estimates of v = 1 stay heavy-tailed after 10 000 episodes (0.52–0.94 over 5 runs) | infinite variance | |
+
+**Chapter 6**
+
+| Driver | Result | Book | Wall |
+|---|---|---|---|
+| Ex 6.2 random walk, 100 runs | RMS after 100 episodes: TD(0) α = 0.05 → 0.037, α = 0.1 → 0.052; MC α = 0.02 → 0.089, α = 0.04 → 0.112 | TD beats MC | 242 s |
+| Ex 6.5 windy gridworld, Sarsa | 170 episodes in 7 852 steps; greedy path 15 steps | ~8 000 steps; optimal 15 | 10 s |
+| Ex 6.6 cliff walking, 10 runs × 500 | mean reward per episode, episodes 451–500: Sarsa −23.2, Q-learning −51.8, Expected Sarsa −20.5; greedy paths 17 / 13 (cliff edge) / 15 | Sarsa ≈ −25, Q ≈ −50 | 628 s |
+| Ex 6.7 maximization bias, 200 runs | % `left` from A, episodes 11–60: Q-learning 85.6, Double Q 24.3; episodes 261–300: 12.9 vs 6.9 | optimal 5 % | 261 s |
+
+Tests (`scripts/run_tests.sh`): 63 checks in 5 files, all pass (Ch5 14 checks in 175 s, Ch6 13 checks in 183 s).
+
 ## Layout / 目录
 
 ```text
 lib/rl/       rng (Park–Miller LCG, Box–Muller), vec helpers, tuple (cons-built lists), check (test oracle)
-lib/envs/     gridworld, blackjack, cliffwalking, random-walk
-lib/algos/    bandit (Ch2), dp (Ch3–4: policy evaluation / iteration, value iteration)
+lib/rl/       (also) knobs: RL_* run-size knobs from the environment
+lib/envs/     gridworld, blackjack, cliffwalking, random-walk, windy
+lib/algos/    bandit (Ch2), dp (Ch3–4), mc (Ch5: MC prediction, MC ES, ε-soft, off-policy IS),
+              td (Ch6: TD(0), Sarsa, Q-learning, Expected Sarsa, Double Q-learning)
+lib/oracle/   exact blackjack v_π and π_* tables (generated by tests/oracle/blackjack_exact.py)
 chapters/     one directory per chapter: experiment drivers (*.aura) + README.md
 tests/        oracle tests; scripts/run_tests.sh fails on any FAIL line or crash
 scripts/      env.sh, run_chapter.sh, run_tests.sh
@@ -85,6 +120,10 @@ scripts/      env.sh, run_chapter.sh, run_tests.sh
 - Small lists in hot paths are built with `cons` (`lib/rl/tuple.aura`), not `list`: each `list` call costs memory proportional to the whole pair heap.
 - Loops use `(if c (begin … (loop …)) #f)` rather than `when` / `unless` / `and` / `or`: a tail call in those forms is not eliminated and overflows the C stack after about 700 iterations.
 - Symbol tags are compared with `equal?`, not `eq?`: a string literal with the same text re-points `(quote sym)`.
+- Lists are reversed with `tup-reverse` (cons-built), not `reverse`, which has the same reserve pattern as `list`.
+- Every division whose denominator can be zero is guarded: `/` by a non-literal zero silently returns `0`.
+- Run sizes are modest because file mode never frees closures; long runs grow by a few KB per episode.
+- `scripts/run_tests.sh` also fails a test file that prints no `PASS` line or a `load_module_file:` / `<error>` line: a failed `require` skips the rest of the file and exits 0.
 
 Details and upstream issue links are in [IMPROVEMENTS.md](IMPROVEMENTS.md).
 

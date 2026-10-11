@@ -1,0 +1,38 @@
+; Chapter 6 — maximization bias: Q-learning vs Double Q-learning (Example 6.7).
+; From A, `left` leads to B, where each of 10 actions ends with reward
+; N(-0.1, 1); `right` ends with 0. ε = 0.1, α = 0.1, γ = 1. The optimal
+; ε-greedy policy takes `left` 5% of the time; Q-learning takes it far more
+; often early on, Double Q-learning stays close to 5%.
+;
+; Knobs: RL_RUNS (default 200; book 10000), RL_EPISODES (default 300), RL_SEED.
+
+(require "rl/rng" all:)
+(require "rl/vec" all:)
+(require "rl/knobs" all:)
+(require "algos/td" all:)
+
+(define runs (env-int "RL_RUNS" 200))
+(define episodes (env-int "RL_EPISODES" 300))
+(rng-seed! (env-int "RL_SEED" 2026))
+
+(define q (td-maxbias-run! #f runs episodes 10))
+(define dq (td-maxbias-run! #t runs episodes 10))
+
+(define (block-mean v lo hi)
+  (let lp ((i lo) (acc 0.0))
+    (if (< i hi) (lp (+ i 1) (+ acc (vector-ref v i))) (/ acc (- hi lo)))))
+
+(display "Example 6.7 — % left actions from A, mean over ") (display runs) (display " runs") (newline)
+(display "  episodes   Q-learning   Double-Q") (newline)
+(define (row lo hi)
+  (display (string-pad-left (string-append (number->string (+ lo 1)) "-" (number->string hi)) 10))
+  (display (string-pad-left (number->string (round-to (* 100.0 (block-mean q lo hi)) 1)) 13))
+  (display (string-pad-left (number->string (round-to (* 100.0 (block-mean dq lo hi)) 1)) 11))
+  (newline))
+(row 0 (min 10 episodes))
+(let lp ((lo 10))
+  (if (< lo episodes)
+      (let ((hi (min episodes (+ lo 50)))) (row lo hi) (lp hi))
+      #f))
+(display "optimal (eps-greedy): 5%") (newline)
+(display "done") (newline)

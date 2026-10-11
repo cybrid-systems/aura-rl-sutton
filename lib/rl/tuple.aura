@@ -5,8 +5,13 @@
 ; (cybrid-systems/aura#4453).
 ; Hot paths here build small lists with cons instead. See IMPROVEMENTS.md.
 
-(export tup2 tup3 tup4)
+(export tup2 tup3 tup4 tup-reverse)
 
 (define (tup2 a b) (cons a (cons b '())))
 (define (tup3 a b c) (cons a (cons b (cons c '()))))
 (define (tup4 a b c d) (cons a (cons b (cons c (cons d '())))))
+
+; cons-built reverse (the `reverse` primitive has the same reserve pattern as `list`).
+(define (tup-reverse lst)
+  (let lp ((l lst) (acc '()))
+    (if (null? l) acc (lp (cdr l) (cons (car l) acc)))))

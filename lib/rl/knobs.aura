@@ -1,0 +1,10 @@
+; rl/knobs.aura — read integer / float experiment sizes from the environment.
+(export env-int env-float)
+
+(define (env-int name default)
+  (let ((s (getenv name)))
+    (if (string? s) (string->number s) default)))
+
+(define (env-float name default)
+  (let ((s (getenv name)))
+    (if (string? s) (* 1.0 (string->number s)) default)))

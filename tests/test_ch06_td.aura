@@ -1,0 +1,68 @@
+; Chapter 6 oracle: random walk RMS, windy gridworld, cliff walking, maximization bias.
+(require "rl/check" all:)
+(require "rl/rng" all:)
+(require "rl/vec" all:)
+(require "envs/windy" all:)
+(require "envs/cliffwalking" all:)
+(require "algos/td" all:)
+
+(define (block-mean v lo hi)
+  (let lp ((i lo) (acc 0.0))
+    (if (< i hi) (lp (+ i 1) (+ acc (vector-ref v i))) (/ acc (- hi lo)))))
+
+; Example 6.2 — random walk
+(rng-seed! 2026)
+(define td1 (td-rw-rms! 'td 0.1 20 100))
+(rng-seed! 2026)
+(define mc2 (td-rw-rms! 'mc 0.02 20 100))
+(check-near "ex6.2 initial RMS (all 0.5)" (vector-ref td1 0) 0.2357 0.001)
+(check-range "ex6.2 TD(0) a=0.1 RMS after 100 eps" (vector-ref td1 100) 0.02 0.09)
+(check-true "ex6.2 TD(0) beats MC (a=0.02) after 100 eps"
+            (< (vector-ref td1 100) (vector-ref mc2 100)))
+
+; Example 6.5 — windy gridworld, Sarsa
+(rng-seed! 2026)
+(define wq (make-vector (* 70 4) 0.0))
+(define wsteps
+  (let lp ((i 0) (t 0))
+    (if (< i 170) (lp (+ i 1) (+ t (cadr (td-control-episode! 'sarsa wq wg-step wg-start 4 0.1 0.5 1.0)))) t)))
+(check-range "ex6.5 steps for 170 episodes (book ~8000)" wsteps 6500 9500)
+(check-range "ex6.5 greedy path length (optimal 15)"
+             (- (length (td-greedy-path wq wg-step wg-start 4 100)) 1) 15 17)
+
+; Example 6.6 — cliff walking
+(define (train method runs episodes)
+  (let ((curve (make-vector episodes 0.0)) (qs (make-vector 1 #f)))
+    (let run ((k 0))
+      (if (< k runs)
+          (let ((q (make-vector 192 0.0)))
+            (let ep ((i 0))
+              (if (< i episodes)
+                  (begin (vec-add-at! curve i (car (td-control-episode! method q cw-step cw-start 4 0.1 0.5 1.0)))
+                         (ep (+ i 1)))
+                  #f))
+            (vector-set! qs 0 q)
+            (run (+ k 1)))
+          #f))
+    (cons (vec-scale! curve (/ 1.0 runs)) (vector-ref qs 0))))
+(rng-seed! 2026)
+(define cs (train 'sarsa 3 200))
+(define cq (train 'q 3 200))
+(define ce (train 'expected 3 200))
+(define (path-len q) (- (length (td-greedy-path q cw-step cw-start 4 100)) 1))
+(check-true "ex6.6 online reward: Sarsa > Q-learning (eps 101-200)"
+            (> (block-mean (car cs) 100 200) (block-mean (car cq) 100 200)))
+(check-range "ex6.6 Q-learning online reward (book ~-50)" (block-mean (car cq) 100 200) -75.0 -35.0)
+(check-range "ex6.6 Sarsa online reward (book ~-25)" (block-mean (car cs) 100 200) -40.0 -15.0)
+(check-true "ex6.6 Expected Sarsa >= Q-learning online"
+            (> (block-mean (car ce) 100 200) (block-mean (car cq) 100 200)))
+(check-true "ex6.6 Q-learning greedy path = cliff edge (13)" (= (path-len (cdr cq)) 13))
+(check-range "ex6.6 Sarsa greedy path is the safe one (>13)" (path-len (cdr cs)) 15 30)
+
+; Example 6.7 — maximization bias
+(rng-seed! 2026)
+(define mq (td-maxbias-run! #f 50 100 10))
+(define md (td-maxbias-run! #t 50 100 10))
+(check-true "ex6.7 Q-learning picks left more than Double Q (eps 1-100)"
+            (> (block-mean mq 0 100) (+ 0.2 (block-mean md 0 100))))
+(check-range "ex6.7 Double Q left% (eps 51-100)" (block-mean md 50 100) 0.0 0.2)

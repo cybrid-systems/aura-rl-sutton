@@ -1,0 +1,224 @@
+; algos/mc.aura — Monte Carlo methods on blackjack (Sutton & Barto, Chapter 5).
+;
+; Blackjack has a single terminal reward and γ = 1, so the return G of every
+; step in an episode equals the final reward. States never repeat within an
+; episode (the sum only grows, or a usable ace turns into a hard total), so
+; first-visit and every-visit give the same estimates here; both are
+; implemented and the tests check they agree.
+;
+; Tables are flat vectors: V[s], Q[2s + a] with a = 0 stick, 1 hit.
+
+(require "rl/rng" all:)
+(require "rl/vec" all:)
+(require "rl/tuple" all:)
+(require "envs/blackjack" all:)
+
+(export mc-act-index mc-index-act mc-bj-predict! mc-bj-es! mc-bj-eps-soft!
+        mc-bj-q->policy mc-bj-off-policy! mc-bj-mean-return! mc-inf-var!)
+
+(define (mc-act-index a) (if (equal? a 'hit) 1 0))
+(define (mc-index-act i) (if (= i 1) 'hit 'stick))
+
+(define (step-state st) (bj-state-index (car st) (cadr st) (car (cddr st))))
+(define (step-action st) (mc-act-index (cadr (cddr st))))
+
+(define (member-int? x lst)
+  (if (null? lst) #f (if (= (car lst) x) #t (member-int? x (cdr lst)))))
+
+; Walk a trajectory and add G to sums[k] / 1 to counts[k] for each step; key-of
+; maps a step to its table key. first-visit? skips keys already seen earlier in
+; the episode. (No per-episode closure: file-mode Aura never frees closures, see
+; IMPROVEMENTS.md.)
+(define (mc-walk! traj G key-of first-visit? sums counts)
+  (let lp ((t traj) (seen '()))
+    (if (null? t)
+        #t
+        (let ((k (key-of (car t))))
+          (if (if first-visit? (member-int? k seen) #f)
+              (lp (cdr t) seen)
+              (begin
+                (vec-add-at! sums k G)
+                (vec-add-at! counts k 1)
+                (lp (cdr t) (cons k seen))))))))
+
+; ---------------------------------------------------------------------------
+; MC prediction (Fig 5.1). → (list V counts)
+(define (mc-bj-predict! policy episodes first-visit?)
+  (let ((sums (make-vector bj-num-states 0.0))
+        (counts (make-vector bj-num-states 0)))
+    (let ep ((i 0))
+      (if (< i episodes)
+          (let ((res (bj-play-episode! policy)))
+            (mc-walk! (cadr res) (car res) step-state first-visit? sums counts)
+            (ep (+ i 1)))
+          #f))
+    (tup2 (averages sums counts) counts)))
+
+(define (averages sums counts)
+  (let ((v (make-vector (vector-length sums) 0.0)))
+    (let lp ((i 0))
+      (if (< i (vector-length sums))
+          (begin
+            (if (> (vector-ref counts i) 0)
+                (vector-set! v i (/ (vector-ref sums i) (* 1.0 (vector-ref counts i))))
+                #f)
+            (lp (+ i 1)))
+          #f))
+    v))
+
+; Greedy action index from running Q sums/counts (unvisited pairs count as 0).
+; Ties go to `tie` (an action index) so the initial policy is kept until data
+; says otherwise.
+(define (q-avg sums counts j)
+  (if (> (vector-ref counts j) 0)
+      (/ (vector-ref sums j) (* 1.0 (vector-ref counts j)))
+      0.0))
+
+(define (greedy-index sums counts s tie)
+  (let ((q0 (q-avg sums counts (* 2 s)))
+        (q1 (q-avg sums counts (+ 1 (* 2 s)))))
+    (if (> q1 q0) 1 (if (> q0 q1) 0 tie))))
+
+(define (sa-key st) (+ (* 2 (step-state st)) (step-action st)))
+
+; ---------------------------------------------------------------------------
+; Monte Carlo ES (Fig 5.2). Initial policy: stick on 20/21, hit otherwise.
+; → (list pi Q) with pi[s] an action index and Q the averaged returns.
+(define (mc-bj-es! episodes)
+  (let ((sums (make-vector (* 2 bj-num-states) 0.0))
+        (counts (make-vector (* 2 bj-num-states) 0))
+        (pi (make-vector bj-num-states 0)))
+    ; initial policy
+    (let lp ((s 0))
+      (if (< s bj-num-states)
+          (begin
+            (vector-set! pi s (if (>= (+ 12 (remainder (quotient s 10) 10)) 20) 0 1))
+            (lp (+ s 1)))
+          #f))
+    (let ((policy (lambda (sum usable show)
+                    (mc-index-act (vector-ref pi (bj-state-index sum usable show))))))
+      (let ep ((i 0))
+        (if (< i episodes)
+            (let* ((sum (+ 12 (rng-int! 10)))
+                   (usable (= (rng-int! 2) 1))
+                   (show (+ 1 (rng-int! 10)))
+                   (a (mc-index-act (rng-int! 2)))
+                   (res (bj-play-from! sum usable show a policy)))
+              (mc-walk! (cadr res) (car res) sa-key #t sums counts)
+              ; policy improvement on the visited states
+              (let imp ((t (cadr res)))
+                (if (null? t)
+                    #f
+                    (let ((s (step-state (car t))))
+                      (vector-set! pi s (greedy-index sums counts s (vector-ref pi s)))
+                      (imp (cdr t)))))
+              (ep (+ i 1)))
+            #f)))
+    (tup2 pi (averages sums counts))))
+
+; ---------------------------------------------------------------------------
+; On-policy first-visit MC control with an ε-soft policy (Sec 5.4).
+; Starts from normal deals (no exploring starts). → (list greedy-pi Q)
+(define (mc-bj-eps-soft! episodes eps)
+  (let ((sums (make-vector (* 2 bj-num-states) 0.0))
+        (counts (make-vector (* 2 bj-num-states) 0)))
+    (let ((policy (lambda (sum usable show)
+                    (if (< (rng-uniform!) eps)
+                        (mc-index-act (rng-int! 2))
+                        (mc-index-act
+                         (greedy-index sums counts (bj-state-index sum usable show)
+                                       (if (>= sum 20) 0 1)))))))
+      (let ep ((i 0))
+        (if (< i episodes)
+            (let ((res (bj-play-episode! policy)))
+              (mc-walk! (cadr res) (car res) sa-key #t sums counts)
+              (ep (+ i 1)))
+            #f)))
+    (tup2 (mc-bj-q->policy sums counts) (averages sums counts))))
+
+; Greedy policy vector from Q sums/counts (ties → stick on 20/21, else hit).
+(define (mc-bj-q->policy sums counts)
+  (let ((pi (make-vector bj-num-states 0)))
+    (let lp ((s 0))
+      (if (< s bj-num-states)
+          (begin
+            (vector-set! pi s (greedy-index sums counts s
+                                            (if (>= (+ 12 (remainder (quotient s 10) 10)) 20) 0 1)))
+            (lp (+ s 1)))
+          #f))
+    pi))
+
+; Average return of a fixed policy over n fresh deals.
+(define (mc-bj-mean-return! policy n)
+  (let lp ((i 0) (acc 0))
+    (if (< i n)
+        (lp (+ i 1) (+ acc (car (bj-play-episode! policy))))
+        (/ (* 1.0 acc) n))))
+
+; ---------------------------------------------------------------------------
+; Off-policy prediction (Fig 5.3): state (13, usable ace, dealer 2),
+; behaviour = uniform random, target = stick on 20/21.
+; Returns (list ord-mse wis-mse) — vectors of length `episodes` with the
+; squared error after each episode, averaged over `runs`.
+(define (bj-behaviour sum usable show) (mc-index-act (rng-int! 2)))
+
+(define (target-act sum) (if (>= sum 20) 'stick 'hit))
+
+; ρ = Π π(a|s)/b(a|s): 0 if any action differs from the target, else 2^T.
+(define (rho traj)
+  (let lp ((t traj) (r 1.0))
+    (if (null? t)
+        r
+        (let ((st (car t)))
+          (if (equal? (cadr (cddr st)) (target-act (car st)))
+              (lp (cdr t) (* 2.0 r))
+              0.0)))))
+
+(define (mc-bj-off-policy! runs episodes truth)
+  (let ((ord (make-vector episodes 0.0))
+        (wis (make-vector episodes 0.0)))
+    (let run ((k 0))
+      (if (< k runs)
+          (begin
+            (let ep ((i 0) (num 0.0) (den 0.0))
+              (if (< i episodes)
+                  (let* ((res (bj-play-from! 13 #t 2 (bj-behaviour 13 #t 2) bj-behaviour))
+                         (r (rho (cadr res)))
+                         (num2 (+ num (* r (car res))))
+                         (den2 (+ den r))
+                         (o (/ num2 (+ i 1.0)))
+                         (w (if (> den2 0.0) (/ num2 den2) 0.0)))
+                    (vec-add-at! ord i (* (- o truth) (- o truth)))
+                    (vec-add-at! wis i (* (- w truth) (- w truth)))
+                    (ep (+ i 1) num2 den2))
+                  #f))
+            (run (+ k 1)))
+          #f))
+    (vec-scale! ord (/ 1.0 runs))
+    (vec-scale! wis (/ 1.0 runs))
+    (tup2 ord wis)))
+
+; ---------------------------------------------------------------------------
+; Infinite variance (Fig 5.4). One non-terminal state; `left` loops back with
+; p = 0.9 (reward 0) or ends with reward +1; `right` ends with 0. Target always
+; left (v_π(s) = 1), behaviour uniform. → vector of ordinary-IS estimates after
+; each episode (one run).
+(define (inf-var-episode!)
+  ; → (list reward rho)
+  (let lp ((r 1.0))
+    (if (= (rng-int! 2) 1)
+        (tup2 0 0.0)                       ; right: target never takes it
+        (if (< (rng-uniform!) 0.1)
+            (tup2 1 (* 2.0 r))
+            (lp (* 2.0 r))))))
+
+(define (mc-inf-var! episodes)
+  (let ((est (make-vector episodes 0.0)))
+    (let ep ((i 0) (num 0.0))
+      (if (< i episodes)
+          (let* ((res (inf-var-episode!))
+                 (n2 (+ num (* (cadr res) (car res)))))
+            (vector-set! est i (/ n2 (+ i 1.0)))
+            (ep (+ i 1) n2))
+          #f))
+    est))

@@ -1,0 +1,52 @@
+; Chapter 6 — TD(0) vs constant-α MC on the 5-state random walk (Example 6.2).
+; Left panel: TD(0) estimates (α = 0.1) after 0, 1, 10, 100 episodes.
+; Right panel: RMS error averaged over runs, for several α.
+;
+; Knobs: RL_RUNS (default 100, as in the book), RL_EPISODES (default 100), RL_SEED.
+
+(require "rl/rng" all:)
+(require "rl/vec" all:)
+(require "rl/knobs" all:)
+(require "envs/random-walk" all:)
+(require "algos/td" all:)
+
+(define runs (env-int "RL_RUNS" 100))
+(define episodes (env-int "RL_EPISODES" 100))
+(rng-seed! (env-int "RL_SEED" 2026))
+
+(define (show-v label v)
+  (display (string-pad-right label 14))
+  (let lp ((s 1))
+    (if (<= s 5) (begin (display (fmt (vector-ref v s) 3)) (lp (+ s 1))) #f))
+  (newline))
+
+(display "Example 6.2 (left) — TD(0) alpha=0.1, states A..E") (newline)
+(show-v "true" (rw-true-values 5 0))
+(define (show-after n)
+  (rng-seed! 7)
+  (show-v (string-append "episodes=" (number->string n)) (td-rw-values! 0.1 n)))
+(show-after 0)
+(show-after 1)
+(show-after 10)
+(show-after 100)
+
+(display "Example 6.2 (right) — RMS error, averaged over ") (display runs)
+(display " runs") (newline)
+(display "  method alpha      ep 1     ep 10     ep 50   ep ") (display episodes) (newline)
+(define (curve method alpha)
+  (let ((c (td-rw-rms! method alpha runs episodes)))
+    (display (string-pad-right (if (equal? method 'td) "  TD(0)" "  MC") 9))
+    (display (string-pad-right (number->string alpha) 6))
+    (display (fmt (vector-ref c 1) 3)) (display "   ")
+    (display (fmt (vector-ref c (min 10 episodes)) 3)) (display "   ")
+    (display (fmt (vector-ref c (min 50 episodes)) 3)) (display "   ")
+    (display (fmt (vector-ref c episodes) 3))
+    (newline)))
+(curve 'td 0.05)
+(curve 'td 0.1)
+(curve 'td 0.15)
+(curve 'mc 0.01)
+(curve 'mc 0.02)
+(curve 'mc 0.03)
+(curve 'mc 0.04)
+(display "done") (newline)

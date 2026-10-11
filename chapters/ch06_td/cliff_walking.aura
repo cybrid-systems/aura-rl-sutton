@@ -1,0 +1,68 @@
+; Chapter 6 — Sarsa vs Q-learning vs Expected Sarsa on cliff walking (Example 6.6).
+; ε = 0.1, α = 0.5, γ = 1. Prints the sum of rewards per episode averaged over
+; runs (in blocks of 50 episodes) and the greedy paths: Q-learning learns the
+; cliff-edge path (13 steps), Sarsa the safer path; online, Sarsa scores better
+; (book: about -25 vs -50 per episode).
+;
+; Knobs: RL_RUNS (default 10; book 50), RL_EPISODES (default 500), RL_SEED.
+
+(require "rl/rng" all:)
+(require "rl/vec" all:)
+(require "rl/knobs" all:)
+(require "envs/gridworld" all:)
+(require "envs/cliffwalking" all:)
+(require "algos/td" all:)
+
+(define runs (env-int "RL_RUNS" 10))
+(define episodes (env-int "RL_EPISODES" 500))
+(rng-seed! (env-int "RL_SEED" 2026))
+
+; → (list mean-reward-curve last-run-Q)
+(define (train method)
+  (let ((curve (make-vector episodes 0.0)))
+    (let run ((k 0) (last-q #f))
+      (if (< k runs)
+          (let ((q (make-vector (* cw-rows cw-cols 4) 0.0)))
+            (let ep ((i 0))
+              (if (< i episodes)
+                  (begin
+                    (vec-add-at! curve i (car (td-control-episode! method q cw-step cw-start 4 0.1 0.5 1.0)))
+                    (ep (+ i 1)))
+                  #f))
+            (run (+ k 1) q))
+          (tup-curve (vec-scale! curve (/ 1.0 runs)) last-q)))))
+
+(define (tup-curve a b) (cons a (cons b '())))
+
+(define (block-mean v lo hi)
+  (let lp ((i lo) (acc 0.0))
+    (if (< i hi) (lp (+ i 1) (+ acc (vector-ref v i))) (/ acc (- hi lo)))))
+
+(define sarsa (train 'sarsa))
+(define qlearn (train 'q))
+(define expected (train 'expected))
+
+(display "Example 6.6 — sum of rewards per episode, mean over ") (display runs) (display " runs") (newline)
+(display "  episodes      Sarsa  Q-learning  Exp.Sarsa") (newline)
+(let lp ((lo 0))
+  (if (< lo episodes)
+      (let ((hi (min episodes (+ lo 50))))
+        (display (string-pad-left (string-append (number->string (+ lo 1)) "-" (number->string hi)) 10))
+        (display (string-pad-left (number->string (round-to (block-mean (car sarsa) lo hi) 1)) 11))
+        (display (string-pad-left (number->string (round-to (block-mean (car qlearn) lo hi) 1)) 12))
+        (display (string-pad-left (number->string (round-to (block-mean (car expected) lo hi) 1)) 11))
+        (newline)
+        (lp hi))
+      #f))
+
+(define (show-path label q)
+  (display label) (display " greedy path length ")
+  (display (- (length (td-greedy-path q cw-step cw-start 4 100)) 1)) (newline)
+  (gw-print-policy (lambda (s) (cond ((= s cw-goal) "G")
+                                     ((and (= (gw-row cw-cols s) 3) (> s cw-start)) "C")
+                                     (else (gw-action-char (q-argmax q 4 s)))))
+                   cw-rows cw-cols))
+(show-path "Sarsa" (cadr sarsa))
+(show-path "Q-learning" (cadr qlearn))
+(show-path "Expected Sarsa" (cadr expected))
+(display "done") (newline)
