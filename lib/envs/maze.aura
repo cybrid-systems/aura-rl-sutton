@@ -1,0 +1,90 @@
+; envs/maze.aura — grid mazes of Chapter 8 (Example 8.1 Dyna maze, Example 8.2
+; blocking maze, Example 8.3 shortcut maze).
+;
+; A maze is a mutable vector [rows cols start goal walls walls-after]; walls is a
+; vector of booleans over states s = row*cols + col. walls-after (or #f) is the
+; layout installed by maze-switch! (blocking / shortcut mazes change mid-run).
+; Actions: 0 = up, 1 = down, 2 = left, 3 = right. Moving into a wall or off the
+; grid leaves the state unchanged. Reaching the goal pays +1 and ends the episode;
+; every other transition pays 0.
+
+(require "rl/tuple" all:)
+
+(export maze-rows maze-cols maze-start maze-goal maze-nS maze-wall? maze-step maze-switch!
+        dyna-maze blocking-maze shortcut-maze maze->string)
+
+(define (maze-rows m) (vector-ref m 0))
+(define (maze-cols m) (vector-ref m 1))
+(define (maze-start m) (vector-ref m 2))
+(define (maze-goal m) (vector-ref m 3))
+(define (maze-nS m) (* (maze-rows m) (maze-cols m)))
+(define (maze-wall? m s) (vector-ref (vector-ref m 4) s))
+
+(define (maze-new rows cols start goal)
+  (let ((m (make-vector 6 #f)))
+    (vector-set! m 0 rows)
+    (vector-set! m 1 cols)
+    (vector-set! m 2 start)
+    (vector-set! m 3 goal)
+    (vector-set! m 4 (make-vector (* rows cols) #f))
+    m))
+
+(define (wall-row! walls cols row c0 c1)
+  (if (<= c0 c1)
+      (begin (vector-set! walls (+ (* row cols) c0) #t) (wall-row! walls cols row (+ c0 1) c1))
+      walls))
+
+(define (wall-cells! walls cells)
+  (if (null? cells)
+      walls
+      (begin (vector-set! walls (car cells) #t) (wall-cells! walls (cdr cells)))))
+
+; (maze-step m s a) → (list s' reward done?)
+(define (maze-step m s a)
+  (let* ((cols (maze-cols m))
+         (r (quotient s cols))
+         (c (modulo s cols))
+         (r2 (if (= a 0) (max (- r 1) 0) (if (= a 1) (min (+ r 1) (- (maze-rows m) 1)) r)))
+         (c2 (if (= a 2) (max (- c 1) 0) (if (= a 3) (min (+ c 1) (- cols 1)) c)))
+         (s2 (+ (* r2 cols) c2))
+         (s3 (if (maze-wall? m s2) s s2)))
+    (if (= s3 (maze-goal m)) (tup3 s3 1.0 #t) (tup3 s3 0.0 #f))))
+
+; Install the second wall layout (no-op for a maze that does not change).
+(define (maze-switch! m)
+  (if (vector-ref m 5) (vector-set! m 4 (vector-ref m 5)) #f)
+  m)
+
+; Example 8.1: 6×9, start (2,0), goal (0,8), walls (1..3,2), (0..2,7), (4,5).
+(define (dyna-maze)
+  (let ((m (maze-new 6 9 18 8)))
+    (wall-cells! (vector-ref m 4) (cons 11 (cons 20 (cons 29 (cons 7 (cons 16 (cons 25 (cons 41 '()))))))))
+    m))
+
+; Example 8.2: 6×9, start (5,3), goal (0,8). Row 3 is walled at columns 0..7
+; (gap on the right); maze-switch! moves the wall to columns 1..8 (gap on the left).
+(define (blocking-maze)
+  (let ((m (maze-new 6 9 48 8)))
+    (wall-row! (vector-ref m 4) 9 3 0 7)
+    (vector-set! m 5 (wall-row! (make-vector 54 #f) 9 3 1 8))
+    m))
+
+; Example 8.3: 6×9, start (5,3), goal (0,8). Row 3 is walled at columns 1..8
+; (gap on the left); maze-switch! opens column 8 as a shortcut (wall 1..7).
+(define (shortcut-maze)
+  (let ((m (maze-new 6 9 48 8)))
+    (wall-row! (vector-ref m 4) 9 3 1 8)
+    (vector-set! m 5 (wall-row! (make-vector 54 #f) 9 3 1 7))
+    m))
+
+; ASCII picture: S start, G goal, # wall, . free.
+(define (maze->string m)
+  (let lp ((s 0) (acc ""))
+    (if (>= s (maze-nS m))
+        acc
+        (lp (+ s 1)
+            (string-append acc
+                           (if (= s (maze-start m)) "S"
+                               (if (= s (maze-goal m)) "G"
+                                   (if (maze-wall? m s) "#" ".")))
+                           (if (= (modulo (+ s 1) (maze-cols m)) 0) "\n" ""))))))

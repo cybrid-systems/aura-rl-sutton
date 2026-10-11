@@ -14,8 +14,8 @@ The project also works as a stress test for [Aura](https://github.com/cybrid-sys
 | 4 | Dynamic programming | ✅ 4×4 gridworld: policy evaluation, policy iteration, value iteration; car rental / gambler TODO |
 | 5 | Monte Carlo | ✅ Fig 5.1–5.4, Sec 5.4: first-/every-visit MC prediction, Monte Carlo ES, ε-soft on-policy control, ordinary vs weighted importance sampling |
 | 6 | TD learning | ✅ Ex 6.2 (TD(0) vs constant-α MC), Fig 6.2 batch updating, 6.5 windy gridworld (Sarsa), 6.6 cliff walking (Sarsa / Q-learning / Expected Sarsa), Fig 6.3 interim / asymptotic α sweep, 6.7 maximization bias (Double Q-learning) |
-| 7 | n-step bootstrapping | ✅ Fig 7.2 n-step TD (19-state random walk); n-step Sarsa, n-step Expected Sarsa, n-step Tree Backup on cliff walking; off-policy IS n-step Sarsa and Q(σ) TODO |
-| 8 | Planning (Dyna) | stub |
+| 7 | n-step bootstrapping | ✅ Fig 7.2 n-step TD (19-state random walk); n-step Sarsa, n-step Expected Sarsa, n-step Tree Backup, off-policy IS n-step Sarsa and off-policy n-step Q(σ) on cliff walking |
+| 8 | Planning (Dyna) | ✅ Fig 8.2 Dyna-Q (Dyna maze), Fig 8.4 / 8.5 Dyna-Q vs Dyna-Q+ (blocking / shortcut maze); prioritized sweeping, Fig 8.7 / 8.8 TODO |
 | 9 | On-policy prediction with approximation | stub |
 | 10 | On-policy control with approximation | stub |
 | 11 | Off-policy with approximation | stub |
@@ -27,7 +27,7 @@ Each `chapters/chNN_*/README.md` lists the algorithms and figures planned for th
 
 ## Aura version / 锁定的 Aura 版本
 
-Tested against Aura `main` at **`2b36f9f7e27135be16f87327c2d1c77eda722fec`** (2026-10-11). Chapters 2–4 were first written against `549fdd3`, Chapters 5–6 against `2f815c188`; all pass at the new pin.
+Tested against Aura `main` at **`f093a8887`** (2026-10-12). Chapters 2–4 were first written against `549fdd3`, Chapters 5–6 against `2f815c188`, Chapter 7 (first part) against `2b36f9f7e`; all pass at the new pin.
 
 All code runs on the **Soft** face:
 
@@ -47,7 +47,8 @@ scripts/run_chapter.sh 3                # 5×5 gridworld
 scripts/run_chapter.sh 4                # 4×4 gridworld DP
 scripts/run_chapter.sh 5                # blackjack MC (about 7 min at the defaults)
 scripts/run_chapter.sh 6                # TD: random walk, batch, windy, cliff, α sweep, max bias (about 35 min)
-scripts/run_chapter.sh 7                # n-step TD / Sarsa / Expected Sarsa / Tree Backup (about 20 min)
+scripts/run_chapter.sh 7                # n-step TD / Sarsa / Expected Sarsa / Tree Backup / off-policy IS / Q(σ) (about 40 min)
+scripts/run_chapter.sh 8                # Dyna-Q maze, Dyna-Q vs Dyna-Q+ on blocking / shortcut mazes (about 10 min)
 scripts/run_tests.sh                    # oracle checks against published values
 ```
 
@@ -74,7 +75,7 @@ Chapter 2 defaults to 20 runs × 300 steps (the book uses 2000 × 1000) because 
 
 ## Results at the defaults / 默认参数下的结果
 
-Seed 2026, Soft face, aarch64 dev container. Chapter 5 and Ex 6.2/6.5–6.7 were measured at Aura `2f815c188`; Fig 6.2, Fig 6.3 and Chapter 7 at `2b36f9f7e`. Run sizes are smaller than the book's
+Seed 2026, Soft face, aarch64 dev container. Chapter 5 and Ex 6.2/6.5–6.7 were measured at Aura `2f815c188`; Fig 6.2, Fig 6.3 and on-policy Chapter 7 at `2b36f9f7e`; off-policy Chapter 7 and Chapter 8 at `f093a8887`. Run sizes are smaller than the book's
 because the Soft interpreter takes about 1.5 ms per blackjack episode and file mode never frees closures
 (memory grows with the run, [#4459](https://github.com/cybrid-systems/aura/issues/4459)). Every driver has
 `RL_*` knobs to raise them.
@@ -108,18 +109,28 @@ because the Soft interpreter takes about 1.5 ms per blackjack episode and file m
 |---|---|---|---|
 | Fig 7.2 n-step TD, 19-state walk, 10 runs × 10 episodes | best RMS per n: n = 1 0.345 (α = 0.8), n = 2 0.257 (0.6), n = 4 0.262 (0.4), n = 8 0.254 (0.2), n = 16 0.302 (0.1); large α hurts large n | intermediate n best, minimum ≈ 0.25–0.3 | 343 s |
 | n-step control, cliff walking, 3 runs × 200 episodes, α = 0.2 | online reward (episodes 101–200) for n = 1 / 2 / 4 / 8: Sarsa −28.0 / −25.2 / −24.0 / −26.7, Expected Sarsa −28.1 / −22.0 / −20.9 / −33.6, Tree Backup −44.5 / −47.2 / −23.6 / −47.1; Tree Backup greedy path 13 (cliff edge) for n = 1, 2 | on-policy safer online; Tree Backup learns q* | 860 s |
+| off-policy n-step control, cliff walking, ε_b = 0.1, greedy target, 3 runs × 200 episodes, α = 0.2 | online reward (episodes 101–200) / greedy-target return: IS n-step Sarsa n = 1 −48.6 / −13, n = 2 −27.7 / −15, n = 4 −26.3 / −17, n = 8 −33.6 / −19; Q(σ), n = 4: σ = 0 −29.7 / −15, σ = 0.5 −25.2 / −17, σ = 1 −26.7 / −17, σ random −30.8 / −17 | n = 1 learns the cliff-edge q* path; with a greedy target ρ is 0 after any exploratory action, so larger n learns the greedy path more slowly in 200 episodes | 1122 s (under load) |
 
-Tests (`scripts/run_tests.sh`): 82 checks in 7 files, all pass at `2b36f9f7e` (Ch6 part 2: 7 checks in 93 s; Ch7: 12 checks in 102 s).
+**Chapter 8**
+
+| Driver | Result | Book | Wall |
+|---|---|---|---|
+| Fig 8.2 Dyna maze, 2 runs × 50 episodes | steps per episode at episodes 1 / 2 / 3 / 5 / 10 / 50: n = 0 868 / 616 / 545 / 73 / 71 / 21, n = 5 868 / 135 / 41 / 21 / 18 / 16, n = 50 868 / 40 / 20 / 14 / 15 / 17; mean over episodes 11–50: 42.4 / 15.7 / 15.8 | first episode the same for all n; n = 50 near optimal (14) by episode 3, n = 0 needs about 25 episodes | 147 s |
+| Fig 8.4 blocking maze, 3 runs × 3000 steps | cumulative reward at steps 1000 / 1500 / 3000: Dyna-Q 51 / 56.7 / 110, Dyna-Q+ 55.3 / 57.3 / 135.3; flat after the change at step 1000, Dyna-Q+ recovers faster | Dyna-Q+ ahead after the change | 440 s (both mazes) |
+| Fig 8.5 shortcut maze, 3 runs × 6000 steps | reward gained in steps 3001–6000: Dyna-Q 164 (about one goal per 18 steps, long path), Dyna-Q+ 225.7 (about one per 13 steps, shortcut) | Dyna-Q+ finds the shortcut, Dyna-Q does not | |
+
+Tests (`scripts/run_tests.sh`): 107 checks in 9 files, all pass at `f093a8887` (Ch7 off-policy: 8 checks in 51 s; Ch8: 17 checks in 50 s).
 
 ## Layout / 目录
 
 ```text
 lib/rl/       rng (Park–Miller LCG, Box–Muller), vec helpers, tuple (cons-built lists), check (test oracle)
 lib/rl/       (also) knobs: RL_* run-size knobs from the environment
-lib/envs/     gridworld, blackjack, cliffwalking, random-walk, windy
+lib/envs/     gridworld, blackjack, cliffwalking, random-walk, windy, maze (Dyna / blocking / shortcut)
 lib/algos/    bandit (Ch2), dp (Ch3–4), mc (Ch5: MC prediction, MC ES, ε-soft, off-policy IS),
               td (Ch6: TD(0), Sarsa, Q-learning, Expected Sarsa, Double Q-learning),
-              td-batch (Fig 6.2 batch TD / MC), nstep (Ch7: n-step TD, Sarsa, Expected Sarsa, Tree Backup)
+              td-batch (Fig 6.2 batch TD / MC), nstep (Ch7: n-step TD, Sarsa, Expected Sarsa, Tree Backup,
+              off-policy IS n-step Sarsa, Q(σ)), dyna (Ch8: Dyna-Q, Dyna-Q+)
 lib/oracle/   exact blackjack v_π and π_* tables (generated by tests/oracle/blackjack_exact.py)
 chapters/     one directory per chapter: experiment drivers (*.aura) + README.md
 tests/        oracle tests; scripts/run_tests.sh fails on any FAIL line or crash
@@ -133,6 +144,8 @@ scripts/      env.sh, run_chapter.sh, run_tests.sh
 - Symbol tags are compared with `equal?`, not `eq?`: a string literal with the same text re-points `(quote sym)`.
 - Lists are reversed with `tup-reverse` (cons-built), not `reverse`, which has the same reserve pattern as `list`.
 - Every division whose denominator can be zero is guarded: `/` by a non-literal zero silently returns `0`.
+- Numbers never come from strings or booleans inside arithmetic: `(* 1.0 "0.95")` is `0` and `(+ 1 #f)` is `1`, so knobs go through `string->number` and numeric tables start at `0.0`, never `#f`.
+- Integer arithmetic stays far below 2^62 (the Park–Miller LCG keeps products below 2^46): results in [2^62, 2^63) abort the process.
 - Run sizes are modest because file mode never frees closures; long runs grow by a few KB per episode. Per-step helpers recurse through top-level procedures instead of named `let`, which allocates a closure per entry.
 - `scripts/run_tests.sh` also fails a test file that prints no `PASS` line or a `load_module_file:` / `<error>` line: a failed `require` skips the rest of the file and exits 0.
 

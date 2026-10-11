@@ -1,6 +1,6 @@
 # aura-rl-sutton state (machine-readable, key=value)
 aura_repo=https://github.com/cybrid-systems/aura
-aura_tip=2b36f9f7e27135be16f87327c2d1c77eda722fec
+aura_tip=f093a8887
 aura_face=soft  # AURA_SANDBOX=off AURA_PIPELINE_STRICT=0
 reference=https://github.com/ShangtongZhang/reinforcement-learning-an-introduction (read-only cross-check)
 
@@ -9,13 +9,13 @@ ch03_finite_mdp=done      # Fig 3.2, Fig 3.5 (values + greedy policy)
 ch04_dp=partial           # 4x4 gridworld: policy eval / policy iteration / value iteration; car rental + gambler TODO
 ch05_monte_carlo=done      # Fig 5.1 first/every-visit, Fig 5.2 MC ES, Sec 5.4 eps-soft, Fig 5.3/5.4 ordinary vs weighted IS
 ch06_td=done              # Ex 6.2 TD(0) vs MC, Fig 6.2 batch TD/MC, Ex 6.5 windy (Sarsa), Ex 6.6 cliff (Sarsa/Q/Expected Sarsa), Fig 6.3 alpha sweep, Ex 6.7 Double Q
-ch07_nstep=partial        # Fig 7.2 n-step TD (19-state walk), n-step Sarsa / Expected Sarsa / Tree Backup on cliff walking; off-policy IS n-step Sarsa + Q(sigma) TODO
-ch08_planning=stub
+ch07_nstep=done           # Fig 7.2 n-step TD (19-state walk), n-step Sarsa / Expected Sarsa / Tree Backup, off-policy IS n-step Sarsa, off-policy n-step Q(sigma) on cliff walking
+ch08_planning=partial     # Fig 8.2 Dyna-Q maze, Fig 8.4/8.5 Dyna-Q vs Dyna-Q+ (blocking / shortcut); prioritized sweeping, Fig 8.7/8.8 TODO
 ch09_onpolicy_approx=stub
 ch10_onpolicy_control=stub
 ch11_offpolicy_approx=stub
 ch12_eligibility_traces=stub
 
-tests=tests/test_envs.aura tests/test_ch02_bandits.aura tests/test_ch03_ch04_dp.aura tests/test_ch05_mc.aura tests/test_ch06_td.aura tests/test_ch06_batch_sweep.aura tests/test_ch07_nstep.aura  # 82 checks
-next=ch07 off-policy n-step Sarsa (IS) + Q(sigma); ch08 Dyna-Q / Dyna-Q+ on the maze; ch02 Fig 2.6; ch04 car rental / gambler
-aura_issues_filed=4453,4454,4455,4456,4457,4458,4459,4460,4461,4462
+tests=tests/test_envs.aura tests/test_ch02_bandits.aura tests/test_ch03_ch04_dp.aura tests/test_ch05_mc.aura tests/test_ch06_td.aura tests/test_ch06_batch_sweep.aura tests/test_ch07_nstep.aura tests/test_ch07_offpolicy.aura tests/test_ch08_dyna.aura  # 107 checks
+next=ch09 on-policy prediction with approximation (gradient MC / semi-gradient TD, 1000-state walk, tile coding); ch10 semi-gradient Sarsa (mountain car); ch08 prioritized sweeping; ch02 Fig 2.6; ch04 car rental / gambler
+aura_issues_filed=4453,4454,4455,4456,4457,4458,4459,4460,4461,4462,4463

@@ -1,0 +1,62 @@
+; Chapter 7 — off-policy n-step control on cliff walking (Sec 7.3 and 7.6):
+; off-policy n-step Sarsa with importance sampling, and off-policy n-step Q(σ)
+; for σ = 0 (Tree Backup), 0.5, 1 (full sampling with IS) and σ ~ Bernoulli(0.5).
+; Behaviour: ε_b-greedy (ε_b = 0.1); target: greedy (ε_π = 0). γ = 1.
+; Reports the online reward under b (mean over runs, last half of training) and
+; the return of the greedy target policy of the last run (−13 = cliff-edge path,
+; −15 = one row up, −100 = greedy policy never reaches the goal in 100 steps).
+;
+; Knobs: RL_RUNS (default 3), RL_EPISODES (default 200), RL_ALPHA (default 0.2), RL_SEED.
+
+(require "rl/rng" all:)
+(require "rl/vec" all:)
+(require "rl/knobs" all:)
+(require "envs/cliffwalking" all:)
+(require "algos/td" all:)
+(require "algos/nstep" all:)
+
+(define runs (env-int "RL_RUNS" 3))
+(define episodes (env-int "RL_EPISODES" 200))
+(define alpha (env-float "RL_ALPHA" 0.2))
+(define seed (env-int "RL_SEED" 2026))
+(define nS (* cw-rows cw-cols))
+(define half (quotient episodes 2))
+
+; → (cons mean-online-reward-over-last-half greedy-return-of-last-run)
+(define (train method n sigma)
+  (let ((acc (make-vector 1 0.0)) (lastq (make-vector 1 #f)))
+    (rng-seed! seed)
+    (let run ((k 0))
+      (if (< k runs)
+          (let ((q (make-vector (* nS 4) 0.0)))
+            (let ep ((i 0))
+              (if (< i episodes)
+                  (let ((r (car (ns-off-episode! method q cw-step cw-start 4 n 0.1 0.0 sigma alpha 1.0))))
+                    (if (>= i half) (vec-add-at! acc 0 r) #f)
+                    (ep (+ i 1)))
+                  #f))
+            (vector-set! lastq 0 q)
+            (run (+ k 1)))
+          #f))
+    (cons (/ (vector-ref acc 0) (* 1.0 runs (- episodes half)))
+          (ns-greedy-return (vector-ref lastq 0) cw-step cw-start 4 100))))
+
+(define (row label p)
+  (display label)
+  (display (string-pad-left (number->string (round-to (car p) 1)) 10))
+  (display (string-pad-left (number->string (round-to (cdr p) 1)) 10))
+  (newline))
+
+(display "off-policy n-step control, cliff walking (eps_b=0.1, greedy target): episodes ")
+(display (+ half 1)) (display "-") (display episodes) (display ", ") (display runs)
+(display " runs, alpha=") (display alpha) (newline)
+(display "  method                     online    greedy") (newline)
+(row "  IS n-step Sarsa  n=1     " (train 'is 1 1.0))
+(row "  IS n-step Sarsa  n=2     " (train 'is 2 1.0))
+(row "  IS n-step Sarsa  n=4     " (train 'is 4 1.0))
+(row "  IS n-step Sarsa  n=8     " (train 'is 8 1.0))
+(row "  Q(sigma) n=4 sigma=0     " (train 'qsigma 4 0.0))
+(row "  Q(sigma) n=4 sigma=0.5   " (train 'qsigma 4 0.5))
+(row "  Q(sigma) n=4 sigma=1     " (train 'qsigma 4 1.0))
+(row "  Q(sigma) n=4 sigma=rand  " (train 'qsigma 4 'rand))
+(display "done") (newline)

@@ -1,0 +1,191 @@
+; algos/dyna.aura — Dyna-Q and Dyna-Q+ (Sutton & Barto, Sec 8.2–8.3).
+;
+; Tabular Dyna-Q (box in Sec 8.2): ε-greedy action (ties random), one-step
+; Q-learning on the real transition, model update, then n planning updates on
+; transitions drawn from the model (a random previously observed state, then a
+; random action previously taken in it).
+; Dyna-Q+ (Sec 8.3): planning reward r + κ √τ, τ = steps since the pair was
+; last tried for real; actions never tried in an observed state are allowed in
+; planning with the model "stay in place, reward 0, last tried at time 1".
+;
+; Q is a flat vector Q[s*nA + a]. The model is a vector:
+;   0 states  observed states, in order of first visit     (vector nS)
+;   1 nstates number of observed states
+;   2 nacts   number of known actions per state            (vector nS)
+;   3 acts    known actions per state, acts[s*nA + k]      (vector nS*nA)
+;   4 next    model next state                             (vector nS*nA)
+;   5 rew     model reward                                 (vector nS*nA)
+;   6 tlast   time of the last real visit; 0 = unknown     (vector nS*nA)
+;   7 clock   real steps fed so far
+;   8 nA
+;   9 plus?   Dyna-Q+ model (untried actions allowed, time stamps used)
+;  10 rng     planning PRNG state (Park–Miller, separate from rl/rng)
+; Planning draws from its own generator, so acting draws the same numbers for
+; every n: with Q = 0 and zero rewards until the goal, the first episode is then
+; identical for every number of planning steps (as in the book's Figure 8.2).
+; Per-step helpers recurse through top-level procedures, not named let
+; (named-let entries are never reclaimed in file mode, aura#4459).
+
+(require "rl/rng" all:)
+(require "rl/vec" all:)
+(require "rl/tuple" all:)
+(require "algos/td" all:)
+(require "envs/maze" all:)
+
+(export dm-new dm-seed! dm-feed! dm-nstates dm-known? dm-next dm-rew dyna-plan!
+        dyna-real-step! dyna-episode! dyna-changing! dyna-curve! dyna-cumulative!)
+
+(define (dm-new nS nA plus?)
+  (let ((m (make-vector 11 0)))
+    (vector-set! m 0 (make-vector nS 0))
+    (vector-set! m 1 0)
+    (vector-set! m 2 (make-vector nS 0))
+    (vector-set! m 3 (make-vector (* nS nA) 0))
+    (vector-set! m 4 (make-vector (* nS nA) 0))
+    (vector-set! m 5 (make-vector (* nS nA) 0.0))
+    (vector-set! m 6 (make-vector (* nS nA) 0))
+    (vector-set! m 7 0)
+    (vector-set! m 8 nA)
+    (vector-set! m 9 plus?)
+    (vector-set! m 10 4242)
+    m))
+
+(define (dm-seed! m seed) (vector-set! m 10 (+ 1 (modulo seed 2147483646))) m)
+
+; planning PRNG: integer in [0, k)
+(define (dm-rand! m k)
+  (let ((x (modulo (* 16807 (vector-ref m 10)) 2147483647)))
+    (vector-set! m 10 x)
+    (modulo x k)))
+
+(define (dm-nstates m) (vector-ref m 1))
+(define (dm-known? m s a) (> (vector-ref (vector-ref m 6) (+ (* s (vector-ref m 8)) a)) 0))
+(define (dm-next m s a) (vector-ref (vector-ref m 4) (+ (* s (vector-ref m 8)) a)))
+(define (dm-rew m s a) (vector-ref (vector-ref m 5) (+ (* s (vector-ref m 8)) a)))
+
+; record (s,a) → (s2, r) last tried at time t; append a to s's action list if new
+(define (dm-put! m s a s2 r t)
+  (let* ((nA (vector-ref m 8))
+         (i (+ (* s nA) a)))
+    (if (= (vector-ref (vector-ref m 6) i) 0)
+        (let ((k (vector-ref (vector-ref m 2) s)))
+          (vector-set! (vector-ref m 3) (+ (* s nA) k) a)
+          (vector-set! (vector-ref m 2) s (+ k 1)))
+        #f)
+    (vector-set! (vector-ref m 4) i s2)
+    (vector-set! (vector-ref m 5) i r)
+    (vector-set! (vector-ref m 6) i t)))
+
+; Dyna-Q+: the other actions of a newly observed state stay in place, reward 0, time 1
+(define (dm-put-untried! m s a b)
+  (if (< b (vector-ref m 8))
+      (begin (if (= b a) #f (dm-put! m s b s 0.0 1))
+             (dm-put-untried! m s a (+ b 1)))
+      #f))
+
+(define (dm-feed! m s a s2 r)
+  (let ((t (+ (vector-ref m 7) 1)))
+    (vector-set! m 7 t)
+    (if (= (vector-ref (vector-ref m 2) s) 0)
+        (let ((k (vector-ref m 1)))
+          (vector-set! (vector-ref m 0) k s)
+          (vector-set! m 1 (+ k 1))
+          (if (vector-ref m 9) (dm-put-untried! m s a 0) #f))
+        #f)
+    (dm-put! m s a s2 r t)))
+
+; n planning updates
+(define (dyna-plan! q m k n alpha gamma kappa)
+  (if (< k n)
+      (let* ((nA (vector-ref m 8))
+             (s (vector-ref (vector-ref m 0) (dm-rand! m (vector-ref m 1))))
+             (a (vector-ref (vector-ref m 3) (+ (* s nA) (dm-rand! m (vector-ref (vector-ref m 2) s)))))
+             (i (+ (* s nA) a))
+             (s2 (vector-ref (vector-ref m 4) i))
+             (r (if (vector-ref m 9)
+                    (+ (vector-ref (vector-ref m 5) i)
+                       (* kappa (sqrt (* 1.0 (- (vector-ref m 7) (vector-ref (vector-ref m 6) i))))))
+                    (vector-ref (vector-ref m 5) i)))
+             (qi (vector-ref q i)))
+        (vector-set! q i (+ qi (* alpha (- (+ r (* gamma (q-max q nA s2))) qi))))
+        (dyna-plan! q m (+ k 1) n alpha gamma kappa))
+      #f))
+
+; One real step from s on maze mz, then n planning updates. → (list s' r done?)
+(define (dyna-real-step! q m mz s eps alpha gamma n kappa)
+  (let* ((nA (vector-ref m 8))
+         (a (q-eps-greedy! q nA s eps))
+         (res (maze-step mz s a))
+         (s2 (car res))
+         (r (cadr res))
+         (i (+ (* s nA) a))
+         (qi (vector-ref q i)))
+    (vector-set! q i (+ qi (* alpha (- (+ r (* gamma (q-max q nA s2))) qi))))
+    (dm-feed! m s a s2 r)
+    (dyna-plan! q m 0 n alpha gamma kappa)
+    res))
+
+; One episode from the start state. → number of real steps
+(define (dyna-episode! q m mz eps alpha gamma n kappa)
+  (dyna-ep-from q m mz (maze-start mz) 0 eps alpha gamma n kappa))
+(define (dyna-ep-from q m mz s steps eps alpha gamma n kappa)
+  (let ((res (dyna-real-step! q m mz s eps alpha gamma n kappa)))
+    (if (car (cddr res))
+        (+ steps 1)
+        (dyna-ep-from q m mz (car res) (+ steps 1) eps alpha gamma n kappa))))
+
+; Continual run of `total` real steps (episodes restart at the start state);
+; maze-switch! is applied before step `switch`. Adds the cumulative reward after
+; each step into out[t].
+(define (dyna-changing! q m mz total switch out eps alpha gamma n kappa)
+  (dyna-ch-from q m mz (maze-start mz) 0 0.0 total switch out eps alpha gamma n kappa))
+(define (dyna-ch-from q m mz s t cum total switch out eps alpha gamma n kappa)
+  (if (< t total)
+      (begin
+        (if (= t switch) (maze-switch! mz) #f)
+        (let* ((res (dyna-real-step! q m mz s eps alpha gamma n kappa))
+               (cum2 (+ cum (cadr res))))
+          (vec-add-at! out t cum2)
+          (dyna-ch-from q m mz (if (car (cddr res)) (maze-start mz) (car res)) (+ t 1) cum2
+                        total switch out eps alpha gamma n kappa)))
+      cum))
+
+; Figure 8.2: mean steps per episode over runs. make-maze builds a fresh maze.
+; Every n uses the same seeds (run k is seeded with seed + k). → vector episodes
+(define (dyna-curve! make-maze n runs episodes seed eps alpha gamma)
+  (let ((out (make-vector episodes 0.0)))
+    (dyna-curve-run make-maze n 0 runs episodes seed eps alpha gamma out)
+    (vec-scale! out (/ 1.0 runs))))
+(define (dyna-curve-run make-maze n k runs episodes seed eps alpha gamma out)
+  (if (< k runs)
+      (let* ((mz (make-maze))
+             (q (make-vector (* (maze-nS mz) 4) 0.0))
+             (m (dm-new (maze-nS mz) 4 #f)))
+        (rng-seed! (+ seed k))
+        (dm-seed! m (+ 7919 seed k))
+        (dyna-curve-ep q m mz 0 n episodes eps alpha gamma out)
+        (dyna-curve-run make-maze n (+ k 1) runs episodes seed eps alpha gamma out))
+      out))
+(define (dyna-curve-ep q m mz i n episodes eps alpha gamma out)
+  (if (< i episodes)
+      (begin
+        (vec-add-at! out i (dyna-episode! q m mz eps alpha gamma n 0.0))
+        (dyna-curve-ep q m mz (+ i 1) n episodes eps alpha gamma out))
+      out))
+
+; Figures 8.4 / 8.5: mean cumulative reward per step over runs for a changing
+; maze. plus? selects Dyna-Q+ (kappa used) or Dyna-Q. → vector total
+(define (dyna-cumulative! make-maze plus? total switch n runs seed eps alpha gamma kappa)
+  (let ((out (make-vector total 0.0)))
+    (dyna-cum-run make-maze plus? total switch n 0 runs seed eps alpha gamma kappa out)
+    (vec-scale! out (/ 1.0 runs))))
+(define (dyna-cum-run make-maze plus? total switch n k runs seed eps alpha gamma kappa out)
+  (if (< k runs)
+      (let* ((mz (make-maze))
+             (q (make-vector (* (maze-nS mz) 4) 0.0))
+             (m (dm-new (maze-nS mz) 4 plus?)))
+        (rng-seed! (+ seed k))
+        (dm-seed! m (+ 7919 seed k))
+        (dyna-changing! q m mz total switch out eps alpha gamma n (if plus? kappa 0.0))
+        (dyna-cum-run make-maze plus? total switch n (+ k 1) runs seed eps alpha gamma kappa out))
+      out))

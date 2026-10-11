@@ -6,6 +6,7 @@
 ;   'sarsa     n-step Sarsa (on-policy, ε-greedy)
 ;   'expected  n-step Expected Sarsa (last step: expectation under ε-greedy)
 ;   'tree      n-step Tree Backup (target policy greedy, behaviour ε-greedy)
+; Off-policy control (Sec 7.3, 7.6): ns-off-episode! — IS n-step Sarsa and Q(σ), see below.
 ;
 ; S, A, R are ring buffers of length n+1 indexed t mod (n+1); this is all the
 ; history an update at τ = t−n+1 reads. T = −1 means "episode not over yet".
@@ -16,7 +17,8 @@
 (require "envs/random-walk" all:)
 (require "algos/td" all:)
 
-(export ns-td-episode! ns-td-rms! ns-control-episode! ns-pi-greedy ns-control-curve!)
+(export ns-td-episode! ns-td-rms! ns-control-episode! ns-pi-greedy ns-control-curve!
+        ns-eg-prob ns-off-episode! ns-greedy-return)
 
 (define (ns-rms v truth n)
   (let lp ((s 1) (acc 0.0))
@@ -179,3 +181,118 @@
     (vec-scale! out (/ 1.0 runs))))
 
 (define gamma-1 1.0)
+
+; ---------------------------------------------------------------------------
+; Off-policy n-step control (Sec 7.3 and 7.6).
+;
+; Behaviour b is ε_b-greedy w.r.t. Q; target π is ε_π-greedy w.r.t. Q (ε_π = 0.0
+; is the greedy target). As in the Q(σ) box, ρ_t = π(A_t|S_t) / b(A_t|S_t) is
+; computed and stored (P ring) when A_t is chosen, so π and b see the same Q and
+; ε_π = ε_b gives ρ = 1 exactly. π(A_k|S_k) and V̄(S_k) inside the Q(σ) recursion
+; use the current Q at update time.
+;   'is       off-policy n-step Sarsa: Q += α ρ_{τ+1:min(τ+n,T−1)} [G − Q]
+;   'qsigma   off-policy n-step Q(σ) (box in Sec 7.6, recursion (7.17))
+; sigma: a number in [0,1] used for every step, or 'rand (σ_t ~ Bernoulli(0.5)).
+
+
+; ε-greedy probability of a in s (uniform over ties among maximal actions)
+(define (ns-eg-prob q nA s a eps)
+  (+ (/ eps nA)
+     (if (= (q-get q nA s a) (q-max q nA s)) (/ (- 1.0 eps) (q-nmax q nA s)) 0.0)))
+
+; Π_{i=lo}^{hi} ρ_i over the stored ratios
+(define (ns-rho P m i hi acc)
+  (if (<= i hi) (ns-rho P m (+ i 1) hi (* acc (ring-ref P m i))) acc))
+
+; ρ = π(a|s) / b(a|s) with the current Q. b(a|s) > 0 because a was drawn from b;
+; still guarded: `/` by a variable zero silently returns 0 (aura#4461).
+(define (ns-ratio q nA s a epsb epst)
+  (let ((b (ns-eg-prob q nA s a epsb)))
+    (if (> b 0.0) (/ (ns-eg-prob q nA s a epst) b) 0.0)))
+
+; Q(σ) recursion, k = from … τ+1:
+;   k = T:  G ← R_T
+;   else:   G ← R_k + γ (σ_k ρ_k + (1−σ_k) π(A_k|S_k)) (G − Q(S_k,A_k)) + γ V̄(S_k)
+(define (ns-qsigma-back q nA S A R B SG m tau k T g gamma epst)
+  (if (<= k tau)
+      g
+      (if (= k T)
+          (ns-qsigma-back q nA S A R B SG m tau (- k 1) T (ring-ref R m T) gamma epst)
+          (let* ((sk (ring-ref S m k))
+                 (ak (ring-ref A m k))
+                 (pk (ns-eg-prob q nA sk ak epst))
+                 (rho (ring-ref B m k))
+                 (sg (ring-ref SG m k))
+                 (vbar (ns-v-eps q nA sk epst)))
+            (ns-qsigma-back q nA S A R B SG m tau (- k 1) T
+                            (+ (ring-ref R m k)
+                               (* gamma (+ (* sg rho) (* (- 1.0 sg) pk)) (- g (q-get q nA sk ak)))
+                               (* gamma vbar))
+                            gamma epst)))))
+
+(define (ns-qsigma-return q nA S A R B SG m tau t T gamma epst)
+  (let* ((from (if (< T 0) (+ t 1) (min (+ t 1) T)))
+         (g0 (if (= from T) 0.0 (q-get q nA (ring-ref S m from) (ring-ref A m from)))))
+    (ns-qsigma-back q nA S A R B SG m tau from T g0 gamma epst)))
+
+(define (ns-pick-sigma sigma)
+  (if (number? sigma) (* 1.0 sigma) (if (rng-bernoulli! 0.5) 1.0 0.0)))
+
+; One episode. method 'is | 'qsigma. → (list total-reward steps)
+(define (ns-off-episode! method q step start nA n epsb epst sigma alpha gamma)
+  (let* ((m (+ n 1))
+         (S (make-vector m 0))
+         (A (make-vector m 0))
+         (B (make-vector m 1.0))
+         (SG (make-vector m 1.0))
+         (R (make-vector m 0.0))
+         (a0 (q-eps-greedy! q nA start epsb)))
+    (ring-set! S m 0 start)
+    (ring-set! A m 0 a0)
+    (ring-set! B m 0 (ns-ratio q nA start a0 epsb epst))
+    (ring-set! SG m 0 (ns-pick-sigma sigma))
+    (ns-off-loop method q step nA n m S A B SG R epsb epst sigma alpha gamma 0 -1 0.0)))
+
+; top-level recursion (named-let entries are never reclaimed, aura#4459)
+(define (ns-off-loop method q step nA n m S A B SG R epsb epst sigma alpha gamma t T total)
+  (let* ((stepped (< T 0))
+         (res (if stepped (step (ring-ref S m t) (ring-ref A m t)) #f))
+         (T2 (if stepped
+                 (begin
+                   (ring-set! S m (+ t 1) (car res))
+                   (ring-set! R m (+ t 1) (* 1.0 (cadr res)))
+                   (if (car (cddr res))
+                       (+ t 1)
+                       (let ((a2 (q-eps-greedy! q nA (car res) epsb)))
+                         (ring-set! A m (+ t 1) a2)
+                         (ring-set! B m (+ t 1) (ns-ratio q nA (car res) a2 epsb epst))
+                         (ring-set! SG m (+ t 1) (ns-pick-sigma sigma))
+                         -1)))
+                 T))
+         (total2 (if stepped (+ total (cadr res)) total))
+         (tau (- (+ t 1) n)))
+    (if (>= tau 0)
+        (let* ((i (+ (* (ring-ref S m tau) nA) (ring-ref A m tau)))
+               (qi (vector-ref q i)))
+          (if (equal? method 'is)
+              (let* ((hi (if (< T2 0) (+ tau n) (min (+ tau n) (- T2 1))))
+                     (rho (ns-rho B m (+ tau 1) hi 1.0))
+                     (g (ns-sarsa-return 'sarsa q nA S A R m tau n T2 epsb gamma)))
+                (vector-set! q i (+ qi (* alpha rho (- g qi)))))
+              (let ((g (ns-qsigma-return q nA S A R B SG m tau t T2 gamma epst)))
+                (vector-set! q i (+ qi (* alpha (- g qi)))))))
+        #f)
+    (if (and (>= T2 0) (>= tau (- T2 1)))
+        (tup2 total2 T2)
+        (ns-off-loop method q step nA n m S A B SG R epsb epst sigma alpha gamma (+ t 1) T2 total2))))
+
+; Return of the greedy policy (first-max ties) from start, capped at max-steps.
+(define (ns-greedy-return q step start nA max-steps)
+  (ns-greedy-ret-from q step start nA max-steps 0 0.0))
+(define (ns-greedy-ret-from q step s nA cap k acc)
+  (if (>= k cap)
+      acc
+      (let ((res (step s (q-argmax q nA s))))
+        (if (car (cddr res))
+            (+ acc (cadr res))
+            (ns-greedy-ret-from q step (car res) nA cap (+ k 1) (+ acc (cadr res)))))))

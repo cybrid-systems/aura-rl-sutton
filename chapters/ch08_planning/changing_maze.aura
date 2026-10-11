@@ -1,0 +1,49 @@
+; Chapter 8 — Figures 8.4 and 8.5: Dyna-Q vs Dyna-Q+ on changing mazes.
+; Blocking maze (Example 8.2): the short path on the right is blocked after
+; 1000 steps and a longer path on the left opens; 3000 steps in total.
+; Shortcut maze (Example 8.3): after 3000 steps a shorter path opens on the
+; right; 6000 steps in total.
+; Continual task: after the goal the agent restarts at S. Cumulative reward
+; (number of goals reached), mean over runs. n = 10 planning steps, α = 1.0,
+; ε = 0.1, γ = 0.95; Dyna-Q+ bonus κ√τ with κ = 1e-4 (blocking) / 1e-3 (shortcut).
+;
+; Knobs: RL_RUNS (default 3), RL_SEED, RL_MAZE (both | blocking | shortcut).
+
+(require "rl/rng" all:)
+(require "rl/vec" all:)
+(require "rl/knobs" all:)
+(require "envs/maze" all:)
+(require "algos/dyna" all:)
+
+(define runs (env-int "RL_RUNS" 3))
+(define seed (env-int "RL_SEED" 2026))
+(define which (let ((s (getenv "RL_MAZE"))) (if (string? s) s "both")))
+
+; cumulative reward gained in steps (lo, hi]
+(define (gain v lo hi) (- (vector-ref v (- hi 1)) (vector-ref v (- lo 1))))
+
+(define (show title make total switch kappa every)
+  (display title) (newline)
+  (display "  before the change:") (newline) (display (maze->string (make)))
+  (display "  after the change:") (newline) (display (maze->string (maze-switch! (make))))
+  (let ((dq (dyna-cumulative! make #f total switch 10 runs seed 0.1 1.0 0.95 kappa))
+        (dqp (dyna-cumulative! make #t total switch 10 runs seed 0.1 1.0 0.95 kappa)))
+    (display "  cumulative reward, mean over ") (display runs) (display " runs") (newline)
+    (display "     step  Dyna-Q Dyna-Q+") (newline)
+    (let lp ((t every))
+      (if (<= t total)
+          (begin
+            (display (string-pad-left (number->string t) 9))
+            (display (fmt (vector-ref dq (- t 1)) 1))
+            (display (fmt (vector-ref dqp (- t 1)) 1))
+            (newline)
+            (lp (+ t every)))
+          #f))
+    (display "  reward gained in the last ") (display (- total switch)) (display " steps (after the change):")
+    (display (fmt (gain dq switch total) 1)) (display (fmt (gain dqp switch total) 1)) (newline)))
+
+(if (equal? which "shortcut") #f
+    (show "Figure 8.4 - blocking maze (switch at step 1000)" blocking-maze 3000 1000 0.0001 250))
+(if (equal? which "blocking") #f
+    (show "Figure 8.5 - shortcut maze (switch at step 3000)" shortcut-maze 6000 3000 0.001 500))
+(display "done") (newline)

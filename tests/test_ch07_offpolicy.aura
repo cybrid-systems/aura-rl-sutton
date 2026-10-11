@@ -1,0 +1,53 @@
+; Chapter 7 oracle: off-policy n-step Sarsa (importance sampling) and n-step Q(σ).
+; Reductions to methods already checked elsewhere, with the same seed:
+;   IS n-step Sarsa with ε_π = ε_b      == on-policy n-step Sarsa (ρ = 1 exactly)
+;   Q(σ=0), greedy target               == n-step Tree Backup (== Q-learning for n = 1)
+;   Q(σ=1), n = 1, ε_π = ε_b            == one-step Expected Sarsa
+(require "rl/check" all:)
+(require "rl/rng" all:)
+(require "rl/vec" all:)
+(require "envs/cliffwalking" all:)
+(require "algos/td" all:)
+(require "algos/nstep" all:)
+
+(define (max-abs-diff a b)
+  (let lp ((i 0) (m 0.0))
+    (if (< i (vector-length a))
+        (lp (+ i 1) (max m (abs (- (vector-ref a i) (vector-ref b i)))))
+        m)))
+(define neps 8)
+(define (q-td method)
+  (let ((q (make-vector 192 0.0)))
+    (rng-seed! 99)
+    (let ep ((i 0)) (if (< i neps) (begin (td-control-episode! method q cw-step cw-start 4 0.1 0.5 1.0) (ep (+ i 1))) #f))
+    q))
+(define (q-ns method n)
+  (let ((q (make-vector 192 0.0)))
+    (rng-seed! 99)
+    (let ep ((i 0)) (if (< i neps) (begin (ns-control-episode! method q cw-step cw-start 4 n 0.1 0.5 1.0) (ep (+ i 1))) #f))
+    q))
+(define (q-off method n epst sigma)
+  (let ((q (make-vector 192 0.0)))
+    (rng-seed! 99)
+    (let ep ((i 0)) (if (< i neps) (begin (ns-off-episode! method q cw-step cw-start 4 n 0.1 epst sigma 0.5 1.0) (ep (+ i 1))) #f))
+    q))
+
+(check-near "7.3 IS Sarsa n=1, eps_pi=eps_b == one-step Sarsa"
+            (max-abs-diff (q-td 'sarsa) (q-off 'is 1 0.1 1.0)) 0.0 1e-9)
+(check-near "7.3 IS Sarsa n=3, eps_pi=eps_b == on-policy 3-step Sarsa"
+            (max-abs-diff (q-ns 'sarsa 3) (q-off 'is 3 0.1 1.0)) 0.0 1e-9)
+(check-near "7.6 Q(sigma=0) n=1, greedy target == Q-learning"
+            (max-abs-diff (q-td 'q) (q-off 'qsigma 1 0.0 0.0)) 0.0 1e-9)
+(check-near "7.6 Q(sigma=0) n=3, greedy target == 3-step Tree Backup"
+            (max-abs-diff (q-ns 'tree 3) (q-off 'qsigma 3 0.0 0.0)) 0.0 1e-9)
+(check-near "7.6 Q(sigma=1) n=1, eps_pi=eps_b == Expected Sarsa"
+            (max-abs-diff (q-td 'expected) (q-off 'qsigma 1 0.1 1.0)) 0.0 1e-9)
+
+; policy probabilities on a hand-made Q row: actions 1 and 3 tie for the max
+(define qrow (make-vector 4 0.0))
+(vector-set! qrow 1 2.0) (vector-set! qrow 3 2.0)
+(check-near "eps-greedy probabilities sum to 1"
+            (+ (ns-eg-prob qrow 4 0 0 0.1) (ns-eg-prob qrow 4 0 1 0.1)
+               (ns-eg-prob qrow 4 0 2 0.1) (ns-eg-prob qrow 4 0 3 0.1)) 1.0 1e-12)
+(check-near "eps-greedy: tied maximal action gets (1-eps)/2 + eps/4" (ns-eg-prob qrow 4 0 3 0.1) 0.475 1e-12)
+(check-near "greedy target: non-maximal action has probability 0" (ns-eg-prob qrow 4 0 2 0.0) 0.0 0.0)

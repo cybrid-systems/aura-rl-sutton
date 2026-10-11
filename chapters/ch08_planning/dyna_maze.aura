@@ -1,0 +1,47 @@
+; Chapter 8 — Figure 8.2: Dyna-Q on the Dyna maze (Example 8.1).
+; Steps per episode for n = 0 (plain one-step Q-learning), 5 and 50 planning
+; steps; α = 0.1, ε = 0.1, γ = 0.95, mean over runs (book: 30 runs).
+; Each run uses the same seed for every n; planning draws from its own PRNG, so
+; the first episode is identical for every n (all Q stay 0 until the goal).
+;
+; Knobs: RL_RUNS (default 2), RL_EPISODES (default 50), RL_SEED.
+
+(require "rl/rng" all:)
+(require "rl/vec" all:)
+(require "rl/knobs" all:)
+(require "envs/maze" all:)
+(require "algos/dyna" all:)
+
+(define runs (env-int "RL_RUNS" 2))
+(define episodes (env-int "RL_EPISODES" 50))
+(define seed (env-int "RL_SEED" 2026))
+
+(display "Figure 8.2 - Dyna maze (6x9):") (newline)
+(display (maze->string (dyna-maze)))
+(display "steps per episode, mean over ") (display runs) (display " runs (optimal path: 14 steps)") (newline)
+
+(define c0 (dyna-curve! dyna-maze 0 runs episodes seed 0.1 0.1 0.95))
+(define c5 (dyna-curve! dyna-maze 5 runs episodes seed 0.1 0.1 0.95))
+(define c50 (dyna-curve! dyna-maze 50 runs episodes seed 0.1 0.1 0.95))
+
+(define (mean-from v lo hi acc)
+  (if (< lo hi) (mean-from v (+ lo 1) hi (+ acc (vector-ref v lo))) acc))
+(define (show-ep i)
+  (if (<= i episodes)
+      (begin
+        (display (string-pad-left (number->string i) 9))
+        (display (fmt (vector-ref c0 (- i 1)) 0))
+        (display (fmt (vector-ref c5 (- i 1)) 0))
+        (display (fmt (vector-ref c50 (- i 1)) 0))
+        (newline))
+      #f))
+(display "  episode    n=0    n=5   n=50") (newline)
+(show-ep 1) (show-ep 2) (show-ep 3) (show-ep 4) (show-ep 5) (show-ep 10)
+(show-ep 20) (show-ep 30) (show-ep 40) (show-ep 50)
+(define tail-lo (min 10 (- episodes 1)))
+(display "  mean steps, episodes ") (display (+ tail-lo 1)) (display "-") (display episodes) (display ":")
+(display (fmt (/ (mean-from c0 tail-lo episodes 0.0) (- episodes tail-lo)) 1))
+(display (fmt (/ (mean-from c5 tail-lo episodes 0.0) (- episodes tail-lo)) 1))
+(display (fmt (/ (mean-from c50 tail-lo episodes 0.0) (- episodes tail-lo)) 1))
+(newline)
+(display "done") (newline)
