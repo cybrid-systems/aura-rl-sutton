@@ -1,0 +1,144 @@
+; algos/bandit.aura — k-armed bandit testbed (Sutton & Barto, Chapter 2).
+;
+; Methods (selected by bandit-cfg):
+;   'eps       ε-greedy, sample-average (alpha = 0) or constant step alpha
+;   'ucb       upper-confidence-bound action selection (c)
+;   'gradient  gradient bandit with/without average-reward baseline
+;
+; (bandit-run! cfg k runs steps) → (list avg-reward-per-step pct-optimal-per-step)
+; Both results are float vectors of length `steps`, averaged over `runs`.
+
+(require "rl/rng" all:)
+(require "rl/vec" all:)
+
+(export bandit-cfg cfg-method cfg-label bandit-run! bandit-tail-mean softmax!)
+
+; cfg = #(method eps alpha init ucb-c baseline? true-offset label)
+(define (bandit-cfg method eps alpha init ucb-c baseline offset label)
+  (let ((c (make-vector 8 0)))
+    (vector-set! c 0 method)
+    (vector-set! c 1 eps)
+    (vector-set! c 2 alpha)
+    (vector-set! c 3 init)
+    (vector-set! c 4 ucb-c)
+    (vector-set! c 5 baseline)
+    (vector-set! c 6 offset)
+    (vector-set! c 7 label)
+    c))
+
+(define (cfg-method c) (vector-ref c 0))
+(define (cfg-eps c) (vector-ref c 1))
+(define (cfg-alpha c) (vector-ref c 2))
+(define (cfg-init c) (vector-ref c 3))
+(define (cfg-ucb-c c) (vector-ref c 4))
+(define (cfg-baseline c) (vector-ref c 5))
+(define (cfg-offset c) (vector-ref c 6))
+(define (cfg-label c) (vector-ref c 7))
+
+; probs ← softmax(prefs). Subtract max for numerical stability.
+(define (softmax! prefs probs)
+  (let ((m (vec-max prefs))
+        (n (vector-length prefs)))
+    (let lp ((i 0) (z 0.0))
+      (if (< i n)
+          (let ((e (exp (- (vector-ref prefs i) m))))
+            (vector-set! probs i e)
+            (lp (+ i 1) (+ z e)))
+          (vec-scale! probs (/ 1.0 z))))))
+
+; Sample an index from a probability vector.
+(define (sample-index! probs)
+  (let ((u (rng-uniform!))
+        (n (vector-length probs)))
+    (let lp ((i 0) (acc 0.0))
+      (if (>= i (- n 1))
+          (- n 1)
+          (let ((acc2 (+ acc (vector-ref probs i))))
+            (if (< u acc2) i (lp (+ i 1) acc2)))))))
+
+; Method tags are compared with equal?, not eq?: on this Aura tip a quoted
+; symbol is a string-heap value, and a later string literal with the same text
+; (e.g. a label "ucb") re-points (quote ucb), so eq? dispatch silently fails
+; (cybrid-systems/aura#4455).
+(define (select-action! cfg q-est counts prefs probs scratch k t)
+  (let ((m (cfg-method cfg)))
+    (cond
+      ((equal? m 'eps)
+       (if (and (> (cfg-eps cfg) 0) (rng-bernoulli! (cfg-eps cfg)))
+           (rng-int! k)
+           (vec-argmax-tie! q-est)))
+      ((equal? m 'ucb)
+       (let lp ((a 0))
+         (if (< a k) (begin
+           (let ((n (vector-ref counts a)))
+             (vector-set! scratch a
+                          (if (= n 0)
+                              1.0e9
+                              (+ (vector-ref q-est a)
+                                 (* (cfg-ucb-c cfg) (sqrt (/ (log (+ t 1.0)) n)))))))
+           (lp (+ a 1))) #f))
+       (vec-argmax-tie! scratch))
+      (else
+       (softmax! prefs probs)
+       (sample-index! probs)))))
+
+(define (update! cfg q-est counts prefs probs a reward baseline k)
+  (if (equal? (cfg-method cfg) 'gradient)
+      (let ((delta (- reward (if (cfg-baseline cfg) baseline 0.0)))
+            (alpha (cfg-alpha cfg)))
+        (let lp ((b 0))
+          (if (< b k) (begin
+            (vector-set! prefs b
+                         (+ (vector-ref prefs b)
+                            (* alpha delta (- (if (= b a) 1.0 0.0) (vector-ref probs b)))))
+            (lp (+ b 1))) #f)))
+      (let ((alpha (cfg-alpha cfg))
+            (qa (vector-ref q-est a)))
+        (vector-set! q-est a
+                     (+ qa (if (> alpha 0)
+                               (* alpha (- reward qa))
+                               (/ (- reward qa) (vector-ref counts a))))))))
+
+(define (bandit-run! cfg k runs steps)
+  (let ((rew (make-vector steps 0.0))
+        (opt (make-vector steps 0.0))
+        (q-true (make-vector k 0.0))
+        (q-est (make-vector k 0.0))
+        (counts (make-vector k 0))
+        (prefs (make-vector k 0.0))
+        (probs (make-vector k 0.0))
+        (scratch (make-vector k 0.0)))
+    (let run-loop ((r 0))
+      (if (< r runs) (begin
+        (let reset ((a 0))
+          (if (< a k) (begin
+            (vector-set! q-true a (rng-normal! (cfg-offset cfg) 1.0))
+            (vector-set! q-est a (* 1.0 (cfg-init cfg)))
+            (vector-set! counts a 0)
+            (vector-set! prefs a 0.0)
+            (reset (+ a 1))) #f))
+        (let ((best (vec-argmax q-true)))
+          (let step-loop ((t 0) (avg 0.0))
+            (if (< t steps) (begin
+              (let* ((a (select-action! cfg q-est counts prefs probs scratch k t))
+                     (reward (rng-normal! (vector-ref q-true a) 1.0))
+                     (avg2 (+ avg (/ (- reward avg) (+ t 1.0)))))
+                (vec-add-at! rew t reward)
+                (if (= a best) (begin (vec-add-at! opt t 1.0)) #f)
+                (vector-set! counts a (+ 1 (vector-ref counts a)))
+                (update! cfg q-est counts prefs probs a reward avg2 k)
+                (step-loop (+ t 1) avg2))) #f)))
+        (run-loop (+ r 1))) #f))
+    (vec-scale! rew (/ 1.0 runs))
+    (vec-scale! opt (/ 100.0 runs))
+    (list rew opt)))
+
+; Mean of v over its last `frac` fraction (e.g. 0.2 → last 20% of steps).
+(define (bandit-tail-mean v frac)
+  (let* ((n (vector-length v))
+         (start (- n (max 1 (round-int (* frac n))))))
+    (let lp ((i start) (s 0.0))
+      (if (>= i n) (/ s (- n start)) (lp (+ i 1) (+ s (vector-ref v i)))))))
+
+(define (round-int x)
+  (inexact->exact (round x)))

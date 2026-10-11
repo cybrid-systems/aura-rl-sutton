@@ -1,0 +1,52 @@
+; Chapter 2 — Multi-armed bandits: the 10-armed testbed.
+; Reimplements the experiments behind Figures 2.2–2.5 (summary numbers, no plots).
+;
+; Env knobs (defaults keep a Soft run under a couple of minutes):
+;   RL_RUNS  (default 20; the book uses 2000)
+;   RL_STEPS (default 300; the book uses 1000)
+;   RL_SEED  (default 2026)
+
+(require "rl/rng" all:)
+(require "rl/vec" all:)
+(require "algos/bandit" all:)
+
+(define (env-int name default)
+  (let ((s (getenv name)))
+    (if (string? s) (string->number s) default)))
+
+(define runs (env-int "RL_RUNS" 20))
+(define steps (env-int "RL_STEPS" 300))
+(rng-seed! (env-int "RL_SEED" 2026))
+
+(define (report cfg)
+  (let* ((res (bandit-run! cfg 10 runs steps))
+         (r (bandit-tail-mean (car res) 0.2))
+         (o (bandit-tail-mean (cadr res) 0.2)))
+    (display (string-pad-right (cfg-label cfg) 34))
+    (display " avg-reward(last 20%)=")
+    (display (fmt r 3))
+    (display "  optimal%=")
+    (display (fmt o 1))
+    (newline)))
+
+(display "Ch2 ten-armed testbed: runs=") (display runs)
+(display " steps=") (display steps) (newline)
+
+(display "-- Figure 2.2: epsilon-greedy, sample averages") (newline)
+(report (bandit-cfg 'eps 0.0  0.0 0.0 0.0 #f 0.0 "greedy (eps=0)"))
+(report (bandit-cfg 'eps 0.01 0.0 0.0 0.0 #f 0.0 "eps=0.01"))
+(report (bandit-cfg 'eps 0.1  0.0 0.0 0.0 #f 0.0 "eps=0.1"))
+
+(display "-- Figure 2.3: optimistic initial values (alpha=0.1)") (newline)
+(report (bandit-cfg 'eps 0.0 0.1 5.0 0.0 #f 0.0 "optimistic Q1=5, eps=0"))
+(report (bandit-cfg 'eps 0.1 0.1 0.0 0.0 #f 0.0 "realistic Q1=0, eps=0.1"))
+
+(display "-- Figure 2.4: UCB vs epsilon-greedy") (newline)
+(report (bandit-cfg 'ucb 0.0 0.0 0.0 2.0 #f 0.0 "UCB c=2"))
+(report (bandit-cfg 'eps 0.1 0.0 0.0 0.0 #f 0.0 "eps=0.1"))
+
+(display "-- Figure 2.5: gradient bandit, true mean +4") (newline)
+(report (bandit-cfg 'gradient 0.0 0.1 0.0 0.0 #t 4.0 "gradient alpha=0.1 baseline"))
+(report (bandit-cfg 'gradient 0.0 0.1 0.0 0.0 #f 4.0 "gradient alpha=0.1 no-baseline"))
+(report (bandit-cfg 'gradient 0.0 0.4 0.0 0.0 #t 4.0 "gradient alpha=0.4 baseline"))
+(report (bandit-cfg 'gradient 0.0 0.4 0.0 0.0 #f 4.0 "gradient alpha=0.4 no-baseline"))

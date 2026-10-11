@@ -1,0 +1,63 @@
+; envs/blackjack.aura — Example 5.1 blackjack, infinite deck.
+; Cards: 1 (ace) .. 10 (10/J/Q/K). Player policy: (lambda (sum usable dealer-show) → 'hit|'stick).
+; Dealer sticks on 17+.
+
+(require "rl/rng" all:)
+(require "rl/tuple" all:)
+
+(export bj-draw! bj-hand-add bj-dealer-play! bj-outcome bj-play-episode! bj-stick-20-policy)
+
+(define (bj-draw!)
+  (min 10 (+ 1 (rng-int! 13))))
+
+; (bj-hand-add sum usable card) → (list sum' usable')
+(define (bj-hand-add sum usable card)
+  (let* ((as-eleven (and (= card 1) (<= (+ sum 11) 21)))
+         (s (+ sum (if as-eleven 11 card)))
+         (u (or usable as-eleven)))
+    (if (and (> s 21) u)
+        (tup2 (- s 10) #f)
+        (tup2 s u))))
+
+; Dealer from (sum usable): hit below 17. → final sum
+(define (bj-dealer-play! sum usable)
+  (if (>= sum 17)
+      sum
+      (let ((h (bj-hand-add sum usable (bj-draw!))))
+        (bj-dealer-play! (car h) (cadr h)))))
+
+; → +1 win, 0 draw, -1 loss (player not bust)
+(define (bj-outcome player dealer)
+  (cond ((> dealer 21) 1)
+        ((> player dealer) 1)
+        ((= player dealer) 0)
+        (else -1)))
+
+(define (bj-stick-20-policy sum usable dealer-show)
+  (if (>= sum 20) 'stick 'hit))
+
+; Deal a fresh hand: player draws until sum >= 12 (decisions below 12 are trivial).
+(define (bj-deal-player sum usable)
+  (if (>= sum 12)
+      (tup2 sum usable)
+      (let ((h (bj-hand-add sum usable (bj-draw!))))
+        (bj-deal-player (car h) (cadr h)))))
+
+; (bj-play-episode! policy) → (list reward trajectory)
+; trajectory: list of (sum usable dealer-show action), first step first.
+(define (bj-play-episode! policy)
+  (let* ((p (bj-deal-player 0 #f))
+         (show (bj-draw!))
+         (d (bj-hand-add 0 #f show))
+         (d2 (bj-hand-add (car d) (cadr d) (bj-draw!))))
+    (let lp ((sum (car p)) (usable (cadr p)) (traj '()))
+      (let ((a (policy sum usable show)))
+        (if (equal? a 'hit)
+            (let ((h (bj-hand-add sum usable (bj-draw!)))
+                  (t2 (cons (tup4 sum usable show a) traj)))
+              (if (> (car h) 21)
+                  (tup2 -1 (reverse t2))
+                  (lp (car h) (cadr h) t2)))
+            (let ((dealer (bj-dealer-play! (car d2) (cadr d2))))
+              (tup2 (bj-outcome sum dealer)
+                    (reverse (cons (tup4 sum usable show a) traj)))))))))

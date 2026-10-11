@@ -1,0 +1,99 @@
+; algos/dp.aura — tabular dynamic programming (Sutton & Barto, Chapters 3–4).
+;
+; A finite MDP is given as a model function:
+;   (model s a) → list of (prob next-state reward)
+; States are 0..n-1, actions 0..num-actions-1. `terminal?` is (lambda (s) → bool).
+; Policies for evaluation are stochastic: (policy s a) → probability.
+
+(require "rl/vec" all:)
+(require "rl/tuple" all:)
+
+(export dp-det dp-outcome dp-q dp-policy-eval! dp-value-iteration! dp-greedy-actions dp-greedy-action
+        dp-policy-iteration!)
+
+; Outcome constructors (cons-built; see rl/tuple.aura for why not `list`).
+(define (dp-outcome p s2 r) (tup3 p s2 r))
+(define (dp-det s2 r) (cons (tup3 1.0 s2 r) '()))
+
+; q(s,a) = Σ p [r + γ v(s')]
+(define (dp-q model v s a gamma)
+  (let lp ((outs (model s a)) (acc 0.0))
+    (if (null? outs)
+        acc
+        (let ((o (car outs)))
+          (lp (cdr outs)
+              (+ acc (* (car o) (+ (car (cddr o)) (* gamma (vector-ref v (cadr o)))))))))))
+
+; Expected update for state s under a stochastic policy.
+(define (expected-v model policy v s num-actions gamma)
+  (let lp ((a 0) (acc 0.0))
+    (if (>= a num-actions)
+        acc
+        (lp (+ a 1) (+ acc (* (policy s a) (dp-q model v s a gamma)))))))
+
+; Iterative policy evaluation. in-place? #t updates v during the sweep;
+; #f uses a synchronous two-array sweep. Returns the number of sweeps.
+(define (dp-policy-eval! v n num-actions model policy gamma theta terminal? in-place?)
+  (let sweep ((k 1))
+    (let ((src (if in-place? v (vec-copy v))))
+      (let lp ((s 0) (delta 0.0))
+        (if (< s n)
+            (if (terminal? s)
+                (lp (+ s 1) delta)
+                (let ((new (expected-v model policy src s num-actions gamma))
+                      (old (vector-ref v s)))
+                  (vector-set! v s new)
+                  (lp (+ s 1) (max delta (abs (- new old))))))
+            (if (< delta theta) k (sweep (+ k 1))))))))
+
+(define (max-q model v s num-actions gamma)
+  (let lp ((a 1) (best (dp-q model v s 0 gamma)))
+    (if (>= a num-actions)
+        best
+        (lp (+ a 1) (max best (dp-q model v s a gamma))))))
+
+; Value iteration (in place). Returns the number of sweeps.
+(define (dp-value-iteration! v n num-actions model gamma theta terminal?)
+  (let sweep ((k 1))
+    (let lp ((s 0) (delta 0.0))
+      (if (< s n)
+          (if (terminal? s)
+              (lp (+ s 1) delta)
+              (let ((new (max-q model v s num-actions gamma))
+                    (old (vector-ref v s)))
+                (vector-set! v s new)
+                (lp (+ s 1) (max delta (abs (- new old))))))
+          (if (< delta theta) k (sweep (+ k 1)))))))
+
+; All actions whose q is within tol of the best (for printing optimal policies).
+(define (dp-greedy-actions model v s num-actions gamma tol)
+  (let ((best (max-q model v s num-actions gamma)))
+    (let lp ((a (- num-actions 1)) (acc '()))
+      (if (< a 0)
+          acc
+          (lp (- a 1)
+              (if (<= (- best (dp-q model v s a gamma)) tol) (cons a acc) acc))))))
+
+(define (dp-greedy-action model v s num-actions gamma)
+  (car (dp-greedy-actions model v s num-actions gamma 1.0e-9)))
+
+; Policy iteration with a deterministic policy vector `pol` (action per state).
+; With gamma = 1 the initial policy must be proper (reach a terminal), otherwise
+; evaluation does not converge.
+; Returns the number of improvement rounds until the policy is stable.
+(define (dp-policy-iteration! v pol n num-actions model gamma theta terminal?)
+  (let round-loop ((rounds 1))
+    (dp-policy-eval! v n num-actions model
+                     (lambda (s a) (if (= a (vector-ref pol s)) 1.0 0.0))
+                     gamma theta terminal? #t)
+    (let lp ((s 0) (stable #t))
+      (if (< s n)
+          (if (terminal? s)
+              (lp (+ s 1) stable)
+              (let* ((old (vector-ref pol s))
+                     (best-set (dp-greedy-actions model v s num-actions gamma 1.0e-9))
+                     (keep (member old best-set))
+                     (new (if keep old (car best-set))))
+                (vector-set! pol s new)
+                (lp (+ s 1) (and stable (= new old)))))
+          (if stable rounds (round-loop (+ rounds 1)))))))

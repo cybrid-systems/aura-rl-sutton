@@ -1,0 +1,47 @@
+; Environment sanity checks (deterministic parts + seeded stochastic parts).
+(require "rl/check" all:)
+(require "rl/rng" all:)
+(require "envs/gridworld" all:)
+(require "envs/blackjack" all:)
+(require "envs/cliffwalking" all:)
+(require "envs/random-walk" all:)
+
+(rng-seed! 7)
+
+; gridworld
+(check-true "gw off-grid stays" (equal? (gw-move 5 5 0 0 0) (list 0 0 #t)))
+(check-true "gw move down" (equal? (gw-move 5 5 0 0 1) (list 1 0 #f)))
+(check-true "gw index/row/col" (and (= (gw-index 5 2 3) 13) (= (gw-row 5 13) 2) (= (gw-col 5 13) 3)))
+
+; blackjack
+(check-true "bj ace as 11" (equal? (bj-hand-add 5 #f 1) (list 16 #t)))
+(check-true "bj ace as 1" (equal? (bj-hand-add 15 #f 1) (list 16 #f)))
+(check-true "bj usable ace demoted" (equal? (bj-hand-add 18 #t 10) (list 18 #f)))
+(check-true "bj dealer bust wins" (= (bj-outcome 15 23) 1))
+(check-true "bj draw" (= (bj-outcome 19 19) 0))
+(define bj-total
+  (let lp ((i 0) (s 0))
+    (if (>= i 2000) s
+        (lp (+ i 1) (+ s (car (bj-play-episode! bj-stick-20-policy)))))))
+; stick-on-20 loses on average (book: ≈ -0.3 to -0.2 per game)
+(check-range "bj stick-20 mean return" (/ (* 1.0 bj-total) 2000) -0.45 -0.05)
+
+; cliff walking
+(check-true "cw cliff resets" (equal? (cw-step cw-start 3) (list cw-start -100 #f)))
+(check-true "cw up from start" (equal? (cw-step cw-start 0) (list (- cw-start 12) -1 #f)))
+(check-true "cw goal" (equal? (cw-step (- cw-goal 12) 1) (list cw-goal -1 #t)))
+
+; random walk
+(define rw-v (rw-true-values 5 0))
+(check-near "rw true v(C)=0.5" (vector-ref rw-v 3) 0.5 1.0e-9)
+(define rw19 (rw-true-values 19 -1))
+(check-near "rw19 true v(10)=0" (vector-ref rw19 10) 0.0 1.0e-9)
+(define rw-ends
+  (let lp ((i 0) (right 0))
+    (if (>= i 1000) right
+        (let ep ((s (rw-start 5)))
+          (let ((st (rw-step! s 5 0)))
+            (if (car (cddr st))
+                (lp (+ i 1) (+ right (cadr st)))
+                (ep (car st))))))))
+(check-range "rw P(right) from C" (/ (* 1.0 rw-ends) 1000) 0.44 0.56)

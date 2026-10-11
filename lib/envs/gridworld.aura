@@ -1,0 +1,51 @@
+; envs/gridworld.aura — deterministic rows×cols grid with 4 actions.
+; Actions: 0=up 1=down 2=left 3=right. States are indexed i*cols + j.
+; Used by Ch3 (5×5 with A/B teleports) and Ch4 (4×4 with terminal corners).
+
+(require "rl/vec" all:)
+(require "rl/tuple" all:)
+
+(export gw-num-actions gw-di gw-dj gw-move gw-index gw-row gw-col
+        gw-action-char gw-print-values gw-print-policy)
+
+(define gw-num-actions 4)
+
+(define (gw-di a) (cond ((= a 0) -1) ((= a 1) 1) (else 0)))
+(define (gw-dj a) (cond ((= a 2) -1) ((= a 3) 1) (else 0)))
+
+(define (gw-index cols i j) (+ (* i cols) j))
+(define (gw-row cols s) (quotient s cols))
+(define (gw-col cols s) (remainder s cols))
+
+; (gw-move rows cols i j a) → (list ni nj off-grid?)
+; Moving off the grid leaves the agent in place and sets off-grid? = #t.
+(define (gw-move rows cols i j a)
+  (let ((ni (+ i (gw-di a)))
+        (nj (+ j (gw-dj a))))
+    (if (or (< ni 0) (>= ni rows) (< nj 0) (>= nj cols))
+        (tup3 i j #t)
+        (tup3 ni nj #f))))
+
+(define (gw-action-char a)
+  (cond ((= a 0) "^") ((= a 1) "v") ((= a 2) "<") (else ">")))
+
+(define (gw-print-values v rows cols d)
+  (let lp ((i 0))
+    (if (< i rows) (begin
+      (let lpj ((j 0))
+        (if (< j cols) (begin
+          (display (fmt (vector-ref v (gw-index cols i j)) d))
+          (lpj (+ j 1))) #f))
+      (newline)
+      (lp (+ i 1))) #f)))
+
+; policy-str: (lambda (s) → string) e.g. greedy arrows "^>"
+(define (gw-print-policy policy-str rows cols)
+  (let lp ((i 0))
+    (if (< i rows) (begin
+      (let lpj ((j 0))
+        (if (< j cols) (begin
+          (display (string-pad-left (policy-str (gw-index cols i j)) 6))
+          (lpj (+ j 1))) #f))
+      (newline)
+      (lp (+ i 1))) #f)))

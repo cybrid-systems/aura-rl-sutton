@@ -1,0 +1,78 @@
+; rl/vec.aura — small float-vector helpers (no vector-map / vector-fill! in Aura std yet).
+;
+; Loops are written as (if c (begin ... (lp ...)) #f) rather than (when c ...):
+; on this Aura tip a self tail call inside when/unless/and/or is not eliminated
+; and overflows the C stack after ~700 iterations (cybrid-systems/aura#4454).
+
+(require "rl/rng" all:)
+
+(export vec-make vec-fill! vec-copy vec-sum vec-max vec-argmax vec-argmax-tie!
+        vec-add-at! vec-scale! vec->string round-to fmt)
+
+(define (vec-make n x) (make-vector n x))
+
+(define (vec-fill! v x)
+  (let lp ((i 0))
+    (if (< i (vector-length v)) (begin
+      (vector-set! v i x)
+      (lp (+ i 1))) #f))
+  v)
+
+(define (vec-copy v)
+  (let ((out (make-vector (vector-length v) 0)))
+    (let lp ((i 0))
+      (if (< i (vector-length v)) (begin
+        (vector-set! out i (vector-ref v i))
+        (lp (+ i 1))) #f))
+    out))
+
+(define (vec-sum v)
+  (let lp ((i 0) (s 0.0))
+    (if (>= i (vector-length v)) s (lp (+ i 1) (+ s (vector-ref v i))))))
+
+(define (vec-max v)
+  (let lp ((i 1) (m (vector-ref v 0)))
+    (if (>= i (vector-length v)) m (lp (+ i 1) (max m (vector-ref v i))))))
+
+; First index of the maximum (deterministic).
+(define (vec-argmax v)
+  (let lp ((i 1) (best 0))
+    (if (>= i (vector-length v))
+        best
+        (lp (+ i 1) (if (> (vector-ref v i) (vector-ref v best)) i best)))))
+
+; Index of the maximum, ties broken uniformly at random (reservoir sampling).
+(define (vec-argmax-tie! v)
+  (let ((m (vec-max v)))
+    (let lp ((i 0) (cnt 0) (pick 0))
+      (if (>= i (vector-length v))
+          pick
+          (if (= (vector-ref v i) m)
+              (let ((c (+ cnt 1)))
+                (lp (+ i 1) c (if (= (rng-int! c) 0) i pick)))
+              (lp (+ i 1) cnt pick))))))
+
+(define (vec-add-at! v i x)
+  (vector-set! v i (+ (vector-ref v i) x)))
+
+(define (vec-scale! v k)
+  (let lp ((i 0))
+    (if (< i (vector-length v)) (begin
+      (vector-set! v i (* k (vector-ref v i)))
+      (lp (+ i 1))) #f))
+  v)
+
+; (round-to x d) → x rounded to d decimals (float).
+(define (round-to x d)
+  (let ((k (* 1.0 (expt 10 d))))
+    (/ (round (* 1.0 x k)) k)))
+
+; (fmt x d) → right-aligned string of x rounded to d decimals, width 7.
+(define (fmt x d)
+  (string-pad-left (number->string (round-to x d)) 7))
+
+(define (vec->string v d)
+  (let lp ((i 0) (acc ""))
+    (if (>= i (vector-length v))
+        acc
+        (lp (+ i 1) (string-append acc (fmt (vector-ref v i) d))))))

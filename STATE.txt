@@ -1,0 +1,20 @@
+# aura-rl-sutton state (machine-readable, key=value)
+aura_repo=https://github.com/cybrid-systems/aura
+aura_tip=549fdd3497f666be4df89b234f7ec31e6d6fa7cf
+aura_face=soft  # AURA_SANDBOX=off AURA_PIPELINE_STRICT=0
+reference=https://github.com/ShangtongZhang/reinforcement-learning-an-introduction (read-only cross-check)
+
+ch02_bandits=partial      # Fig 2.2-2.5 run; Fig 2.6 parameter study TODO
+ch03_finite_mdp=done      # Fig 3.2, Fig 3.5 (values + greedy policy)
+ch04_dp=partial           # 4x4 gridworld: policy eval / policy iteration / value iteration; car rental + gambler TODO
+ch05_monte_carlo=stub     # env: lib/envs/blackjack.aura
+ch06_td=stub              # envs: lib/envs/random-walk.aura, lib/envs/cliffwalking.aura
+ch07_nstep=stub
+ch08_planning=stub
+ch09_onpolicy_approx=stub
+ch10_onpolicy_control=stub
+ch11_offpolicy_approx=stub
+ch12_eligibility_traces=stub
+
+tests=tests/test_envs.aura tests/test_ch02_bandits.aura tests/test_ch03_ch04_dp.aura
+next=ch05 blackjack MC prediction + MC ES; ch06 TD(0)/Sarsa/Q-learning on random walk + cliff walking

@@ -1,0 +1,13 @@
+# local run artefacts
+*.out
+*.log
+results/
+tmp/
+# reference checkout (never committed; clone it next to this repo instead)
+reference/
+rl-ref/
+# editors / OS
+.DS_Store
+*.swp
+.vscode/
+.idea/

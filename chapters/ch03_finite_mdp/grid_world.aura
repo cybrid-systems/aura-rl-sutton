@@ -1,0 +1,46 @@
+; Chapter 3 — Finite MDPs: the 5×5 gridworld (Example 3.5 / 3.8).
+; A=(0,1) → A'=(4,1) with +10, B=(0,3) → B'=(2,3) with +5,
+; off-grid moves cost -1 and leave the state unchanged, γ = 0.9.
+;   Figure 3.2: v_π for the equiprobable random policy (iterative evaluation)
+;   Figure 3.5: v_* and an optimal policy (value iteration)
+
+(require "envs/gridworld" all:)
+(require "algos/dp" all:)
+(require "rl/vec" all:)
+
+(define size 5)
+(define n (* size size))
+(define gamma 0.9)
+(define a-pos (gw-index size 0 1))
+(define a-prime (gw-index size 4 1))
+(define b-pos (gw-index size 0 3))
+(define b-prime (gw-index size 2 3))
+
+(define (model s a)
+  (cond ((= s a-pos) (dp-det a-prime 10.0))
+        ((= s b-pos) (dp-det b-prime 5.0))
+        (else
+         (let ((m (gw-move size size (gw-row size s) (gw-col size s) a)))
+           (dp-det (gw-index size (car m) (cadr m))
+                   (if (car (cddr m)) -1.0 0.0))))))
+
+(define (never-terminal s) #f)
+(define (random-policy s a) 0.25)
+
+(define v-random (make-vector n 0.0))
+(define sweeps-random
+  (dp-policy-eval! v-random n gw-num-actions model random-policy gamma 1.0e-4 never-terminal #f))
+(display "Figure 3.2 — v_pi (random policy), sweeps=") (display sweeps-random) (newline)
+(gw-print-values v-random size size 1)
+
+(define v-star (make-vector n 0.0))
+(define sweeps-star
+  (dp-value-iteration! v-star n gw-num-actions model gamma 1.0e-4 never-terminal))
+(display "Figure 3.5 — v_* (value iteration), sweeps=") (display sweeps-star) (newline)
+(gw-print-values v-star size size 1)
+
+(define (arrows s)
+  (let lp ((as (dp-greedy-actions model v-star s gw-num-actions gamma 1.0e-3)) (acc ""))
+    (if (null? as) acc (lp (cdr as) (string-append acc (gw-action-char (car as)))))))
+(display "Figure 3.5 — pi_* (all greedy actions)") (newline)
+(gw-print-policy arrows size size)

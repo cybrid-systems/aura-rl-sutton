@@ -1,0 +1,50 @@
+; Chapter 4 — Dynamic programming on the 4×4 gridworld (Example 4.1).
+; Terminal states are the two corners, every move costs -1, γ = 1.
+;   Figure 4.1: v_π for the equiprobable random policy, in-place vs synchronous sweeps
+;   Policy iteration and value iteration converge to the same optimal values.
+
+(require "envs/gridworld" all:)
+(require "algos/dp" all:)
+(require "rl/vec" all:)
+
+(define size 4)
+(define n (* size size))
+
+(define (terminal? s) (or (= s 0) (= s (- n 1))))
+
+(define (model s a)
+  (let ((m (gw-move size size (gw-row size s) (gw-col size s) a)))
+    (dp-det (gw-index size (car m) (cadr m)) -1.0)))
+
+(define (random-policy s a) 0.25)
+
+(define v-inplace (make-vector n 0.0))
+(define k-inplace
+  (dp-policy-eval! v-inplace n gw-num-actions model random-policy 1.0 1.0e-4 terminal? #t))
+(define v-sync (make-vector n 0.0))
+(define k-sync
+  (dp-policy-eval! v-sync n gw-num-actions model random-policy 1.0 1.0e-4 terminal? #f))
+
+(display "Figure 4.1 — v_pi (random policy)") (newline)
+(gw-print-values v-inplace size size 1)
+(display "sweeps: in-place=") (display k-inplace)
+(display " synchronous=") (display k-sync) (newline)
+
+(define v-pi (make-vector n 0.0))
+; Policy iteration must start from a proper policy when γ = 1 (an improper one,
+; e.g. "always up", has unbounded values). Seed it greedily from v_random.
+(define pol (make-vector n 0))
+(let lp ((s 0))
+  (if (< s n) (begin
+    (vector-set! pol s (dp-greedy-action model v-inplace s gw-num-actions 1.0))
+    (lp (+ s 1))) #f))
+(define rounds (dp-policy-iteration! v-pi pol n gw-num-actions model 1.0 1.0e-4 terminal?))
+(display "Policy iteration: rounds=") (display rounds) (newline)
+(gw-print-values v-pi size size 1)
+
+(define v-vi (make-vector n 0.0))
+(define k-vi (dp-value-iteration! v-vi n gw-num-actions model 1.0 1.0e-4 terminal?))
+(display "Value iteration: sweeps=") (display k-vi) (newline)
+(gw-print-policy (lambda (s) (if (terminal? s) "T"
+                                 (gw-action-char (dp-greedy-action model v-vi s gw-num-actions 1.0))))
+                 size size)

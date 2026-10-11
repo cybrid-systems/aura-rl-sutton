@@ -1,0 +1,22 @@
+; envs/cliffwalking.aura — Example 6.6 cliff walking, 4×12 grid.
+; Start (3,0), goal (3,11), cliff (3,1..10): reward -100 and reset to start.
+; Every other step: reward -1. Actions as in gridworld: 0=up 1=down 2=left 3=right.
+
+(require "envs/gridworld" all:)
+(require "rl/tuple" all:)
+
+(export cw-rows cw-cols cw-start cw-goal cw-step)
+
+(define cw-rows 4)
+(define cw-cols 12)
+(define cw-start (gw-index 12 3 0))
+(define cw-goal (gw-index 12 3 11))
+
+; (cw-step s a) → (list s' reward done?)
+(define (cw-step s a)
+  (let* ((m (gw-move cw-rows cw-cols (gw-row cw-cols s) (gw-col cw-cols s) a))
+         (ni (car m))
+         (nj (cadr m)))
+    (cond ((and (= ni 3) (> nj 0) (< nj 11)) (tup3 cw-start -100 #f))
+          ((= (gw-index cw-cols ni nj) cw-goal) (tup3 cw-goal -1 #t))
+          (else (tup3 (gw-index cw-cols ni nj) -1 #f)))))

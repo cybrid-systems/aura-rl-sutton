@@ -1,0 +1,31 @@
+; Chapter 2 oracle: small seeded runs, check qualitative orderings from the book.
+(require "rl/check" all:)
+(require "rl/rng" all:)
+(require "rl/vec" all:)
+(require "algos/bandit" all:)
+
+(rng-seed! 11)
+(define probs (make-vector 3 0.0))
+(softmax! (vector 0.0 0.0 0.0) probs)
+(check-near "softmax uniform" (vector-ref probs 0) (/ 1.0 3) 1.0e-9)
+(softmax! (vector 1000.0 0.0 0.0) probs)
+(check-near "softmax stable at large prefs" (vector-ref probs 0) 1.0 1.0e-9)
+
+(define (tail cfg)
+  (let ((res (bandit-run! cfg 10 30 300)))
+    (list (bandit-tail-mean (car res) 0.3) (bandit-tail-mean (cadr res) 0.3))))
+
+(define greedy (tail (bandit-cfg 'eps 0.0 0.0 0.0 0.0 #f 0.0 "greedy")))
+(define eps01 (tail (bandit-cfg 'eps 0.1 0.0 0.0 0.0 #f 0.0 "eps=0.1")))
+(define ucb (tail (bandit-cfg 'ucb 0.0 0.0 0.0 2.0 #f 0.0 "ucb")))
+(define grad (tail (bandit-cfg 'gradient 0.0 0.1 0.0 0.0 #t 4.0 "grad")))
+
+; Figure 2.2: eps=0.1 finds the optimal arm more often than greedy.
+(check-true "eps=0.1 optimal% > greedy optimal%" (> (cadr eps01) (cadr greedy)))
+(check-range "eps=0.1 avg reward" (car eps01) 0.9 1.6)
+; Figure 2.4: UCB is competitive with eps-greedy.
+(check-range "ucb avg reward" (car ucb) 1.0 1.7)
+; Regression for the eq?-on-symbol workaround: label "ucb" must not break dispatch.
+(check-range "ucb optimal% (label \"ucb\")" (cadr ucb) 50.0 100.0)
+; Figure 2.5: gradient + baseline reaches a high optimal-action rate (offset +4 does not matter).
+(check-range "gradient+baseline optimal%" (cadr grad) 50.0 100.0)

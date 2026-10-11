@@ -1,0 +1,38 @@
+; rl/rng.aura — deterministic, seedable PRNG for the RL experiments.
+;
+; Park–Miller "minimal standard" LCG: s' = 16807 * s mod (2^31 - 1).
+; Products stay below 2^46, so plain fixnum arithmetic is exact.
+; State is a module-level 1-slot vector (needs Soft: vector-set!).
+
+(export rng-seed! rng-next! rng-uniform! rng-int! rng-normal! rng-bernoulli!)
+
+(define rng-m 2147483647)
+(define rng-state (make-vector 1 12345))
+
+; (rng-seed! s) — any integer; 0 is remapped so the state is never 0.
+(define (rng-seed! s)
+  (vector-set! rng-state 0 (+ 1 (modulo s (- rng-m 1))))
+  #t)
+
+; (rng-next!) → integer in [1, 2^31-2]
+(define (rng-next!)
+  (vector-set! rng-state 0 (modulo (* 16807 (vector-ref rng-state 0)) rng-m))
+  (vector-ref rng-state 0))
+
+; (rng-uniform!) → float in (0, 1)
+(define (rng-uniform!)
+  (/ (* 1.0 (rng-next!)) (* 1.0 rng-m)))
+
+; (rng-int! n) → integer in [0, n)
+(define (rng-int! n)
+  (modulo (rng-next!) n))
+
+; (rng-bernoulli! p) → #t with probability p
+(define (rng-bernoulli! p)
+  (< (rng-uniform!) p))
+
+; (rng-normal! mu sigma) — Box–Muller transform.
+(define (rng-normal! mu sigma)
+  (let* ((u1 (rng-uniform!))
+         (u2 (rng-uniform!)))
+    (+ mu (* sigma (sqrt (* -2.0 (log u1))) (cos (* 6.283185307179586 u2))))))

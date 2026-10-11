@@ -1,0 +1,28 @@
+; envs/random-walk.aura — Example 6.2 / 7.1 random walk.
+; Non-terminal states 1..n, terminals 0 and n+1, start in the middle.
+; Right terminal pays +1; left terminal pays left-reward (0 for the 5-state
+; walk, -1 for the 19-state walk of Ch7).
+
+(require "rl/rng" all:)
+(require "rl/tuple" all:)
+
+(export rw-start rw-step! rw-true-values)
+
+(define (rw-start n) (+ 1 (quotient n 2)))
+
+; (rw-step! s n left-reward) → (list s' reward done?) ; moves left/right w.p. 1/2
+(define (rw-step! s n left-reward)
+  (let ((s2 (if (= (rng-int! 2) 0) (- s 1) (+ s 1))))
+    (cond ((= s2 0) (tup3 0 left-reward #t))
+          ((= s2 (+ n 1)) (tup3 s2 1 #t))
+          (else (tup3 s2 0 #f)))))
+
+; True values under the random policy (γ=1), vector of length n+2 (terminals 0).
+(define (rw-true-values n left-reward)
+  (let ((v (make-vector (+ n 2) 0.0)))
+    (let lp ((s 1))
+      (if (<= s n) (begin
+        ; linear interpolation between left-reward at 0 and 1 at n+1
+        (vector-set! v s (+ left-reward (* (- 1.0 left-reward) (/ (* 1.0 s) (+ n 1)))))
+        (lp (+ s 1))) #f))
+    v))
