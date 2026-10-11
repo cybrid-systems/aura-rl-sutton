@@ -1,0 +1,113 @@
+; algos/semigrad-sarsa.aura — Chapter 10: episodic semi-gradient n-step Sarsa
+; on mountain car with tile coding (Sec 10.1–10.2, Fig 10.1–10.3).
+;
+; Tile coding: 8 tilings of an 8x8 grid over (position, velocity), each tiling
+; offset by (1, 3) eighths of a tile per tiling index (the asymmetric offsets of
+; Sec 9.5.4), one extra row/column so every point is covered, and a separate copy
+; per action. That is a collision-free version of the hashed tile coder the book
+; uses (8 tilings * 11 * 11 * 3 actions = 2904 weights). q(s, a) is the sum of the
+; 8 active weights; a step size alpha is divided by 8 (alpha = 0.5 in the book's
+; units means 0.5/8 per tile). Actions are greedy (epsilon = 0) with random ties;
+; initial weights 0 are optimistic because every reward is -1.
+;
+; Per-step helpers are top-level recursion (no named let, cybrid-systems/aura#4459)
+; and the episode keeps (n+1)-slot ring buffers of active tiles and actions.
+
+(require "rl/rng" all:)
+(require "envs/mountain-car" all:)
+
+(export mct-tiles! mct-q sarsa-new sarsa-episode! sarsa-weights sarsa-cost-to-go
+        sarsa-greedy-action)
+
+(define mct-K 8)
+(define mct-G 11)
+
+; write the 8 active base indices (action 0) of (p, v) into ring[base .. base+7]
+(define (mct-fill! ring base qp qv t)
+  (if (< t 8)
+      (begin
+        (vector-set! ring (+ base t)
+                     (* 3 (+ (* (+ (* t mct-G) (quotient (+ qp t) 8)) mct-G)
+                             (quotient (+ qv (* 3 t)) 8))))
+        (mct-fill! ring base qp qv (+ t 1)))
+      #t))
+(define (mct-tiles! ring base p v)
+  (mct-fill! ring base
+             (inexact->exact (floor (/ (* 64.0 (- p mcar-pmin)) (- mcar-pmax mcar-pmin))))
+             (inexact->exact (floor (/ (* 64.0 (+ v mcar-vmax)) (* 2.0 mcar-vmax))))
+             0))
+
+(define (mct-sum w ring base a t acc)
+  (if (< t 8)
+      (mct-sum w ring base a (+ t 1) (+ acc (vector-ref w (+ a (vector-ref ring (+ base t))))))
+      acc))
+(define (mct-q w ring base a) (mct-sum w ring base a 0 0.0))
+
+(define (mct-add! w ring base a d t)
+  (if (< t 8)
+      (begin (vector-set! w (+ a (vector-ref ring (+ base t)))
+                          (+ d (vector-ref w (+ a (vector-ref ring (+ base t))))))
+             (mct-add! w ring base a d (+ t 1)))
+      #t))
+
+; agent = #(weights alpha n tile-ring action-ring scratch)
+(define (sarsa-new alpha n)
+  (vector (make-vector (* mct-K mct-G mct-G 3) 0.0) (* 1.0 alpha) n
+          (make-vector (* 8 (+ n 1)) 0) (make-vector (+ n 1) 0) (make-vector 8 0)))
+(define (sarsa-weights ag) (vector-ref ag 0))
+
+; greedy action at ring slot base, ties broken uniformly
+(define (greedy w ring base)
+  (let* ((q0 (mct-q w ring base 0)) (q1 (mct-q w ring base 1)) (q2 (mct-q w ring base 2))
+         (m (max q0 (max q1 q2)))
+         (c (+ (if (= q0 m) 1 0) (if (= q1 m) 1 0) (if (= q2 m) 1 0)))
+         (k (rng-int! c)))
+    (cond ((= q0 m) (if (= k 0) 0 (if (= q1 m) (if (= k 1) 1 2) 2)))
+          ((= q1 m) (if (= k 0) 1 2))
+          (else 2))))
+
+(define (sarsa-greedy-action ag p v)
+  (mct-tiles! (vector-ref ag 5) 0 p v)
+  (greedy (vector-ref ag 0) (vector-ref ag 5) 0))
+
+; -max_a q(p, v, a)  (Figure 10.1)
+(define (sarsa-cost-to-go ag p v)
+  (let ((w (vector-ref ag 0)) (r (vector-ref ag 5)))
+    (mct-tiles! r 0 p v)
+    (- 0.0 (max (mct-q w r 0 0) (max (mct-q w r 0 1) (mct-q w r 0 2))))))
+
+(define (slot ag i) (* 8 (modulo i (+ 1 (vector-ref ag 2)))))
+(define (act ag i) (vector-ref (vector-ref ag 4) (modulo i (+ 1 (vector-ref ag 2)))))
+
+; observe the current environment state into slot i and choose A_i greedily
+(define (observe! ag i)
+  (let ((b (slot ag i)))
+    (mct-tiles! (vector-ref ag 3) b (mcar-pos) (mcar-vel))
+    (vector-set! (vector-ref ag 4) (modulo i (+ 1 (vector-ref ag 2)))
+                 (greedy (vector-ref ag 0) (vector-ref ag 3) b))))
+
+; update for time tau given terminal time T (or a large number while running)
+(define (update! ag tau T)
+  (let* ((n (vector-ref ag 2)) (w (vector-ref ag 0)) (ring (vector-ref ag 3))
+         (G (+ (- 0.0 (- (min (+ tau n) T) tau))
+               (if (< (+ tau n) T) (mct-q w ring (slot ag (+ tau n)) (act ag (+ tau n))) 0.0)))
+         (b (slot ag tau)) (a (act ag tau)))
+    (mct-add! w ring b a (/ (* (vector-ref ag 1) (- G (mct-q w ring b a))) 8.0) 0)))
+
+(define sarsa-never 1000000000)
+
+(define (run! ag t T cap)
+  (let* ((T2 (if (< t T)
+                 (if (mcar-step! (act ag t)) (+ t 1) (begin (observe! ag (+ t 1)) T))
+                 T))
+         (tau (+ (- t (vector-ref ag 2)) 1)))
+    (if (>= tau 0) (update! ag tau T2) #f)
+    (cond ((= tau (- T2 1)) T2)
+          ((>= t cap) t)
+          (else (run! ag (+ t 1) T2 cap)))))
+
+; one episode from a random start; returns the number of steps (capped at cap)
+(define (sarsa-episode! ag cap)
+  (mcar-reset!)
+  (observe! ag 0)
+  (run! ag 0 sarsa-never cap))

@@ -1,0 +1,57 @@
+; Chapter 9 — gradient Monte Carlo and semi-gradient TD(0) with state aggregation
+; on the 1000-state random walk (Example 9.1, Figure 9.1 and Figure 9.2 left).
+; 10 groups of 100 states. The book runs 100 000 episodes at alpha = 2e-5 (MC) and
+; 2e-4 (TD); the defaults here keep alpha * episodes the same with 2 000 episodes.
+; Gradient MC converges to the mu-weighted average of v_pi within each group (mu =
+; on-policy state distribution); TD(0) converges to a different, biased fixed point.
+;
+; Knobs: RL_EPISODES (default 2000), RL_ALPHA_MC (0.001), RL_ALPHA_TD (0.01), RL_SEED.
+
+(require "rl/rng" all:)
+(require "rl/vec" all:)
+(require "rl/knobs" all:)
+(require "oracle/walk1000-exact" all:)
+(require "algos/approx" all:)
+
+(define episodes (env-int "RL_EPISODES" 2000))
+(define alpha-mc (env-float "RL_ALPHA_MC" 0.001))
+(define alpha-td (env-float "RL_ALPHA_TD" 0.01))
+(rng-seed! (env-int "RL_SEED" 2026))
+
+(define mu (make-vector 1002 0))
+(define (mc-loop tc k) (if (> k 0) (begin (gradient-mc! tc alpha-mc mu) (mc-loop tc (- k 1))) tc))
+(define (td-loop tc k) (if (> k 0) (begin (semi-gradient-td! tc 1 alpha-td) (td-loop tc (- k 1))) tc))
+
+(define t0 (current-time-ms))
+(define mc (mc-loop (tc-aggregation 1000 100) episodes))
+(define td (td-loop (tc-aggregation 1000 100) episodes))
+
+; per group: plain mean of v_pi, and mu-weighted mean (the gradient MC fixed point)
+(define (gsum g s acc wacc n)
+  (if (<= s (* (+ g 1) 100))
+      (gsum g (+ s 1) (+ acc (vector-ref w1k-true s))
+            (+ wacc (* (vector-ref mu s) (vector-ref w1k-true s))) (+ n (vector-ref mu s)))
+      (cons acc (cons wacc n))))
+(define total (vec-sum mu))
+(define st (agg-stats w1k-true 1000 100))
+
+(display "Figure 9.1 / 9.2 (left) — 1000-state random walk, 10 groups, ") (display episodes)
+(display " episodes; alpha MC = ") (display alpha-mc) (display ", TD = ") (display alpha-td) (newline)
+(display " group  states     v_pi  mu-avg v_pi   grad MC   semi-grad TD(0)   mu %") (newline)
+(define (row g)
+  (if (< g 10)
+      (let* ((r (gsum g (+ 1 (* g 100)) 0.0 0.0 0.0)))
+        (display (string-pad-left (number->string (+ g 1)) 6))
+        (display (string-pad-left (string-append (number->string (+ 1 (* g 100))) "-" (number->string (* (+ g 1) 100))) 9))
+        (display (fmt (/ (car r) 100.0) 3)) (display "  ")
+        (display (fmt (if (> (cddr r) 0) (/ (cadr r) (cddr r)) 0.0) 3)) (display "    ")
+        (display (fmt (vector-ref (tc-weights mc) g) 3)) (display "   ")
+        (display (fmt (vector-ref (tc-weights td) g) 3)) (display "          ")
+        (display (fmt (/ (* 100.0 (cddr r)) total) 1)) (newline)
+        (row (+ g 1)))
+      #t))
+(row 0)
+(display "RMS error vs v_pi: gradient MC ") (display (round-to (agg-rms mc st 1000) 4))
+(display ", semi-gradient TD(0) ") (display (round-to (agg-rms td st 1000) 4))
+(display "  (") (display (- (current-time-ms) t0)) (display " ms)") (newline)
+(display "done") (newline)

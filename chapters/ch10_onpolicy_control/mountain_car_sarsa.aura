@@ -1,0 +1,67 @@
+; Chapter 10 — episodic semi-gradient Sarsa on mountain car (Example 10.1,
+; Figures 10.1 and 10.2). 8 tilings over (position, velocity), greedy actions,
+; zero (optimistic) initial weights. Figure 10.1: the cost-to-go -max_a q(s, a)
+; after the first and the last episode. Figure 10.2: steps per episode for
+; alpha = 0.1/8, 0.2/8, 0.5/8.
+;
+; Knobs: RL_RUNS (default 1; book 100), RL_EPISODES (default 100; book 500),
+; RL_CAP (step cap per episode, 20000), RL_SEED.
+
+(require "rl/rng" all:)
+(require "rl/vec" all:)
+(require "rl/knobs" all:)
+(require "envs/mountain-car" all:)
+(require "algos/semigrad-sarsa" all:)
+
+(define runs (env-int "RL_RUNS" 1))
+(define episodes (env-int "RL_EPISODES" 100))
+(define cap (env-int "RL_CAP" 20000))
+(rng-seed! (env-int "RL_SEED" 2026))
+
+; cost-to-go grid: rows velocity 0.07 .. -0.07, columns position -1.2 .. 0.5
+(define (ctg-row ag v i)
+  (if (< i 9)
+      (begin (display (string-pad-left (number->string (round (sarsa-cost-to-go ag (+ -1.2 (* i 0.2125)) v))) 6))
+             (ctg-row ag v (+ i 1)))
+      #t))
+(define (ctg ag j)
+  (if (< j 7)
+      (let ((v (- 0.07 (* j (/ 0.14 6.0)))))
+        (display (string-pad-left (number->string (round-to v 3)) 8)) (display " |")
+        (ctg-row ag v 0) (newline) (ctg ag (+ j 1)))
+      #t))
+(define (ctg-h i) (if (< i 9) (begin (display (string-pad-left (number->string (round-to (+ -1.2 (* i 0.2125)) 2)) 6)) (ctg-h (+ i 1))) #t))
+(define (ctg-header) (display "  vel \\ pos") (ctg-h 0) (newline))
+
+(define t0 (current-time-ms))
+(define ag (sarsa-new 0.3 1))
+(define first-steps (sarsa-episode! ag cap))
+(display "Figure 10.1 — cost-to-go -max_a q(s,a), alpha = 0.3/8, after episode 1 (")
+(display first-steps) (display " steps)") (newline)
+(ctg-header) (ctg ag 0)
+(define (more k) (if (< k episodes) (begin (sarsa-episode! ag cap) (more (+ k 1))) #t))
+(more 1)
+(display "after episode ") (display episodes) (newline)
+(ctg-header) (ctg ag 0)
+
+; Figure 10.2
+(define (run-eps a c k)
+  (if (< k episodes) (begin (vec-add-at! c k (* 1.0 (sarsa-episode! a cap))) (run-eps a c (+ k 1))) c))
+(define (run-runs alpha c r) (if (< r runs) (begin (run-eps (sarsa-new alpha 1) c 0) (run-runs alpha c (+ r 1))) c))
+(define (curve-for alpha) (vec-scale! (run-runs alpha (make-vector episodes 0.0) 0) (/ 1.0 runs)))
+(define (sum-range v i hi acc) (if (< i hi) (sum-range v (+ i 1) hi (+ acc (vector-ref v i))) acc))
+(define (avg-of v lo hi) (/ (sum-range v lo hi 0.0) (* 1.0 (- hi lo))))
+
+(display "Figure 10.2 — steps per episode (") (display runs) (display " run(s))") (newline)
+(display "   alpha      ep1     ep2     ep5    ep10    ep20    ep50  last10 mean") (newline)
+(define (at c k) (if (>= episodes k) (display (string-pad-left (number->string (round (vector-ref c (- k 1)))) 8)) #f))
+(define (show-curve label c)
+  (display (string-pad-left label 8))
+  (at c 1) (at c 2) (at c 5) (at c 10) (at c 20) (at c 50)
+  (display (string-pad-left (number->string (round-to (avg-of c (max 0 (- episodes 10)) episodes) 1)) 12))
+  (newline))
+(show-curve "0.1/8" (curve-for 0.1))
+(show-curve "0.2/8" (curve-for 0.2))
+(show-curve "0.5/8" (curve-for 0.5))
+(display "(") (display (- (current-time-ms) t0)) (display " ms)") (newline)
+(display "done") (newline)

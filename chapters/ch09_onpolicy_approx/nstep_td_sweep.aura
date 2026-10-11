@@ -1,0 +1,47 @@
+; Chapter 9 — semi-gradient n-step TD with state aggregation on the 1000-state
+; random walk (Figure 9.2 right): 20 groups of 50 states, RMS error over the 1000
+; states averaged over the first 10 episodes and over runs, for a grid of n and alpha.
+; As in the tabular Figure 7.2, intermediate n does best.
+;
+; Knobs: RL_RUNS (default 10; book 100), RL_EPISODES (10), RL_SEED.
+
+(require "rl/rng" all:)
+(require "rl/vec" all:)
+(require "rl/knobs" all:)
+(require "oracle/walk1000-exact" all:)
+(require "algos/approx" all:)
+
+(define runs (env-int "RL_RUNS" 10))
+(define episodes (env-int "RL_EPISODES" 10))
+(rng-seed! (env-int "RL_SEED" 2026))
+(define st (agg-stats w1k-true 1000 50))
+
+(define ns (cons 1 (cons 2 (cons 4 (cons 8 (cons 16 (cons 32 (cons 64 '()))))))))
+(define alphas (cons 0.1 (cons 0.2 (cons 0.4 (cons 0.6 (cons 0.8 (cons 1.0 '())))))))
+
+(define (eps tc n alpha k acc)
+  (if (< k episodes)
+      (begin (semi-gradient-td! tc n alpha)
+             (eps tc n alpha (+ k 1) (+ acc (agg-rms tc st 1000))))
+      acc))
+(define (runs-loop n alpha r acc)
+  (if (< r runs) (runs-loop n alpha (+ r 1) (+ acc (eps (tc-aggregation 1000 50) n alpha 0 0.0))) acc))
+(define (rms n alpha) (/ (runs-loop n alpha 0 0.0) (* 1.0 runs episodes)))
+
+(define t0 (current-time-ms))
+(display "Figure 9.2 (right) — semi-gradient n-step TD, 20 groups: RMS over the first ")
+(display episodes) (display " episodes, ") (display runs) (display " runs") (newline)
+(display "      n ")
+(define (hdr l) (if (null? l) #t (begin (display (string-pad-left (string-append "a=" (number->string (car l))) 8)) (hdr (cdr l)))))
+(hdr alphas) (newline)
+(define (cols n l)
+  (if (null? l) #t
+      (begin (display (string-pad-left (number->string (round-to (rms n (car l)) 3)) 8))
+             (cols n (cdr l)))))
+(define (rows l)
+  (if (null? l) #t
+      (begin (display (string-pad-left (number->string (car l)) 7)) (display " ")
+             (cols (car l) alphas) (newline) (rows (cdr l)))))
+(rows ns)
+(display "(") (display (- (current-time-ms) t0)) (display " ms)") (newline)
+(display "done") (newline)

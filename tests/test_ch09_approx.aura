@@ -1,0 +1,87 @@
+; Chapter 9 oracle: 1000-state walk, exact v_pi, tile coder, gradient MC /
+; semi-gradient TD with state aggregation, n-step sweep shape, coarse coding.
+(require "rl/check" all:)
+(require "rl/rng" all:)
+(require "rl/vec" all:)
+(require "envs/walk1000" all:)
+(require "oracle/walk1000-exact" all:)
+(require "algos/approx" all:)
+
+(rng-seed! 2026)
+
+; --- dynamics: jumps of 1..100, terminals 0 / 1001
+(define (walk-ok s k)
+  (if (> k 0)
+      (let ((s2 (w1k-step! s)))
+        (if (if (>= s2 0) (<= s2 1001) #f)
+            (if (or (= s2 0) (= s2 1001) (<= (abs (- s2 s)) 100))
+                (walk-ok (if (w1k-terminal? s2) 500 s2) (- k 1))
+                #f)
+            #f))
+      #t))
+(check-true "walk1000: 3000 steps stay in [0, 1001] with jumps of at most 100" (walk-ok 500 3000))
+(check-true "walk1000: rewards -1 / +1 / 0"
+            (if (= (w1k-reward 0) -1.0) (if (= (w1k-reward 1001) 1.0) (= (w1k-reward 400) 0.0) #f) #f))
+(define (mean-T k acc) (if (> k 0) (mean-T (- k 1) (+ acc (w1k-episode!))) (/ acc 200.0)))
+(check-range "walk1000: mean episode length (200 episodes)" (mean-T 200 0.0) 50.0 130.0)
+
+; --- exact values (DP oracle)
+(check-near "v_pi(1) = -0.92196" (vector-ref w1k-true 1) -0.92196 0.00001)
+(check-near "v_pi antisymmetric: v(300) + v(701) = 0" (+ (vector-ref w1k-true 300) (vector-ref w1k-true 701)) 0.0 0.000001)
+(define (mono s) (if (< s 1000) (if (< (vector-ref w1k-true s) (vector-ref w1k-true (+ s 1))) (mono (+ s 1)) #f) #t))
+(check-true "v_pi strictly increasing over 1..1000" (mono 1))
+
+; --- tile coder
+(define ag (tc-aggregation 1000 100))
+(tc-update! ag 100 0.5)
+(check-true "aggregation: states 1..100 share one weight, 101 does not"
+            (if (= (tc-value ag 1) 0.5) (if (= (tc-value ag 100) 0.5) (= (tc-value ag 101) 0.0) #f) #f))
+(define tt (tc-tilings 1000 200 20 10))
+(check-true "tilings: 10 tilings x 6 tiles" (= (vector-length (tc-weights tt)) 60))
+(tc-update! tt 500 1.0)
+(check-near "tilings: a unit step at s moves v(s) by exactly 1" (tc-value tt 500) 1.0 0.000001)
+(check-range "tilings: neighbour s+1 shares 9 or 10 of 10 tiles" (tc-value tt 501) 0.8999999 1.0000001)
+(check-near "tilings: s+150 shares 3 of 10 tiles (offset 20, width 200)" (tc-value tt 650) 0.3 0.1000001)
+(check-near "tilings: s+250 shares none" (tc-value tt 750) 0.0 0.0)
+(check-near "tilings: every state is covered by exactly K tiles (s = 1 and 1000)"
+            (begin (tc-update! tt 1 1.0) (tc-update! tt 1000 1.0) (+ (tc-value tt 1) (tc-value tt 1000))) 2.0 0.000001)
+
+; --- gradient MC and semi-gradient TD(0), 10 groups (Figure 9.1 / 9.2 left)
+(define st (agg-stats w1k-true 1000 100))
+(define mu (make-vector 1002 0))
+(define (mc-loop tc k) (if (> k 0) (begin (gradient-mc! tc 0.002 mu) (mc-loop tc (- k 1))) tc))
+(define (td-loop tc k) (if (> k 0) (begin (semi-gradient-td! tc 1 0.01) (td-loop tc (- k 1))) tc))
+(define mc (mc-loop (tc-aggregation 1000 100) 800))
+(define td (td-loop (tc-aggregation 1000 100) 800))
+(check-near "fast aggregation RMS equals the per-state RMS" (agg-rms mc st 1000) (tc-rms mc w1k-true 1000) 0.000001)
+(check-range "fig9.1 gradient MC RMS after 800 episodes" (agg-rms mc st 1000) 0.0 0.15)
+(define (vsum v lo hi acc) (if (<= lo hi) (vsum v (+ lo 1) hi (+ acc (vector-ref v lo))) acc))
+(check-true "fig9.1 mu: middle groups visited more than end groups"
+            (> (vsum mu 401 600 0) (+ (vsum mu 1 200 0) (vsum mu 801 1000 0))))
+(check-true "fig9.1 gradient MC estimates increase from group 1 to group 10"
+            (if (< (vector-ref (tc-weights mc) 0) (vector-ref (tc-weights mc) 4))
+                (< (vector-ref (tc-weights mc) 4) (vector-ref (tc-weights mc) 9)) #f))
+(check-true "fig9.2 TD(0) end groups are pulled toward 0 (|w| below the true group mean 0.846)"
+            (if (> (vector-ref (tc-weights td) 0) -0.846) (< (vector-ref (tc-weights td) 9) 0.846) #f))
+
+; --- n-step semi-gradient TD, 20 groups (Figure 9.2 right): 5 runs x 10 episodes
+(define st20 (agg-stats w1k-true 1000 50))
+(define (eps tc n a k acc) (if (< k 10) (begin (semi-gradient-td! tc n a) (eps tc n a (+ k 1) (+ acc (agg-rms tc st20 1000)))) acc))
+(define (runs n a r acc) (if (< r 5) (runs n a (+ r 1) (+ acc (eps (tc-aggregation 1000 50) n a 0 0.0))) (/ acc 50.0)))
+(define r1 (runs 1 0.4 0 0.0))
+(define r4 (runs 4 0.4 0 0.0))
+(define r64 (runs 64 0.4 0 0.0))
+(check-true "fig9.2 n = 4 beats n = 1 and n = 64 at alpha = 0.4" (if (< r4 r1) (< r4 r64) #f))
+(check-range "fig9.2 n = 4, alpha = 0.4 RMS (book minimum about 0.25-0.3)" r4 0.2 0.35)
+
+; --- coarse coding (Figure 9.8)
+(define (nonzero cc x k) (if (< x 2.0) (nonzero cc (+ x 0.1) (if (> (abs (cc-value cc x)) 0.01) (+ k 1) k)) k))
+(rng-seed! 7)
+(define n10 (cc-train! (cc-new 0.2) 10 0.2))
+(rng-seed! 7)
+(define b10 (cc-train! (cc-new 1.0) 10 0.2))
+(check-true "fig9.8 after the same 10 samples broad features generalise to more of [0, 2) than narrow ones"
+            (> (nonzero b10 0.05 0) (nonzero n10 0.05 0)))
+(check-range "fig9.8 narrow, 2560 samples: MAE" (cc-mae (cc-train! (cc-new 0.2) 2560 0.2)) 0.0 0.15)
+(check-range "fig9.8 broad, 2560 samples: MAE" (cc-mae (cc-train! (cc-new 1.0) 2560 0.2)) 0.0 0.15)
+(check-true "square wave target" (if (= (square-wave 1.0) 1.0) (if (= (square-wave 0.5) 0.0) (= (square-wave 1.7) 0.0) #f) #f))

@@ -1,0 +1,26 @@
+; envs/walk1000.aura — the 1000-state random walk of Example 9.1.
+; Non-terminal states 1..1000, start at 500. Each step jumps uniformly 1..100
+; states left or right; a jump past either end terminates (left pays -1, right
+; +1, every other reward is 0). States are plain integers, terminals 0 and 1001,
+; so a step allocates nothing (closures and conses are never freed in file mode,
+; cybrid-systems/aura#4459).
+
+(require "rl/rng" all:)
+
+(export w1k-n w1k-start w1k-step! w1k-terminal? w1k-reward)
+
+(define w1k-n 1000)
+(define w1k-start 500)
+
+; (w1k-step! s) → next state (0 or 1001 when the episode ends)
+(define (w1k-step! s)
+  (let* ((k (+ 1 (rng-int! 100)))
+         (s2 (if (= (rng-int! 2) 0) (- s k) (+ s k))))
+    (cond ((< s2 1) 0)
+          ((> s2 1000) 1001)
+          (else s2))))
+
+(define (w1k-terminal? s) (if (= s 0) #t (= s 1001)))
+
+; reward of the transition that enters s
+(define (w1k-reward s) (cond ((= s 0) -1.0) ((= s 1001) 1.0) (else 0.0)))

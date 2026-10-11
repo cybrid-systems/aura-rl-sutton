@@ -1,0 +1,195 @@
+; algos/approx.aura — Chapter 9: on-policy prediction with linear function
+; approximation on the 1000-state random walk, and coarse coding (Fig 9.8).
+;
+; A value function over integer states 1..n is a set of K tilings of width W
+; (tile coding). State aggregation is the special case K = 1 with the tiling
+; starting at state 1. v(s) = sum of the K active tile weights; a gradient step
+; with error delta adds alpha*delta/K to each active tile (the gradient of v
+; is the binary feature vector; dividing by K keeps alpha comparable across K).
+;
+; Loops are top-level recursive procedures, not named let: every named-let
+; entry allocates a closure that file mode never frees (cybrid-systems/aura#4459).
+; Loops avoid when/unless/and/or around tail calls (#4454).
+
+(require "rl/rng" all:)
+(require "rl/vec" all:)
+(require "envs/walk1000" all:)
+
+(export tc-aggregation tc-tilings tc-value tc-update! tc-weights tc-rms
+        agg-stats agg-rms w1k-episode! w1k-last-reward
+        gradient-mc! semi-gradient-td! w1k-group-values
+        cc-new cc-value cc-train! cc-mae square-wave)
+
+; ---------------------------------------------------------------- tile coder
+; tc = #(K W size starts weights)
+(define (tc-make K W size starts)
+  (vector K W size starts (make-vector (* K size) 0.0)))
+
+; one tiling of n/W groups, group g = (s-1) quotient W
+(define (tc-aggregation n W)
+  (tc-make 1 W (quotient n W) (make-vector 1 1)))
+
+; K tilings of width W; tiling k starts at -W+1+k*offset (one extra tile each, so
+; every state is covered by exactly K tiles)
+(define (tc-starts! v k K W off)
+  (if (< k K)
+      (begin (vector-set! v k (+ (- 1 W) (* k off))) (tc-starts! v (+ k 1) K W off))
+      v))
+(define (tc-tilings n W off K)
+  (tc-make K W (+ 1 (quotient n W)) (tc-starts! (make-vector K 0) 0 K W off)))
+
+(define (tc-weights tc) (vector-ref tc 4))
+
+(define (tc-index tc k s)
+  (+ (* k (vector-ref tc 2))
+     (quotient (- s (vector-ref (vector-ref tc 3) k)) (vector-ref tc 1))))
+
+(define (tc-sum tc s k K acc)
+  (if (< k K)
+      (tc-sum tc s (+ k 1) K (+ acc (vector-ref (vector-ref tc 4) (tc-index tc k s))))
+      acc))
+(define (tc-value tc s) (tc-sum tc s 0 (vector-ref tc 0) 0.0))
+
+(define (tc-add! tc s k K d)
+  (if (< k K)
+      (begin (vec-add-at! (vector-ref tc 4) (tc-index tc k s) d)
+             (tc-add! tc s (+ k 1) K d))
+      #t))
+; w += step * grad v(s), step = alpha * (target - v(s))
+(define (tc-update! tc s step)
+  (tc-add! tc s 0 (vector-ref tc 0) (/ step (* 1.0 (vector-ref tc 0)))))
+
+; RMS error over states 1..n against a true-value vector (index 0 unused)
+(define (tc-sq tc truth s n acc)
+  (if (<= s n)
+      (let ((e (- (tc-value tc s) (vector-ref truth s))))
+        (tc-sq tc truth (+ s 1) n (+ acc (* e e))))
+      acc))
+(define (tc-rms tc truth n) (sqrt (/ (tc-sq tc truth 1 n 0.0) (* 1.0 n))))
+
+; Fast RMS for state aggregation (K = 1, tiling starting at state 1):
+; sum over a group of (w_g - v_s)^2 = W w_g^2 - 2 w_g S1_g + S2_g with S1, S2 the sum
+; and sum of squares of the true values in the group. (agg-stats truth n W) → #(S1.. S2..)
+(define (agg-acc! st truth s n W)
+  (if (<= s n)
+      (let ((g (quotient (- s 1) W)) (t (vector-ref truth s)))
+        (vec-add-at! st g t)
+        (vec-add-at! st (+ g (quotient n W)) (* t t))
+        (agg-acc! st truth (+ s 1) n W))
+      st))
+(define (agg-stats truth n W) (agg-acc! (make-vector (* 2 (quotient n W)) 0.0) truth 1 n W))
+(define (agg-sq w st g G W acc)
+  (if (< g G)
+      (let ((x (vector-ref w g)))
+        (agg-sq w st (+ g 1) G W
+                (+ acc (- (+ (* W x x) (vector-ref st (+ g G))) (* 2.0 x (vector-ref st g))))))
+      acc))
+(define (agg-rms tc st n)
+  (sqrt (max 0.0 (/ (agg-sq (vector-ref tc 4) st 0 (vector-ref tc 2) (* 1.0 (vector-ref tc 1)) 0.0)
+                    (* 1.0 n)))))
+
+; mean of v over each aggregation group of width W (for printing Fig 9.1 / 9.2)
+(define (grp-sum tc s hi acc)
+  (if (<= s hi) (grp-sum tc (+ s 1) hi (+ acc (tc-value tc s))) acc))
+(define (grp-fill! tc out g G W)
+  (if (< g G)
+      (begin (vector-set! out g (/ (grp-sum tc (+ 1 (* g W)) (* (+ g 1) W) 0.0) (* 1.0 W)))
+             (grp-fill! tc out (+ g 1) G W))
+      out))
+(define (w1k-group-values tc W)
+  (grp-fill! tc (make-vector (quotient 1000 W) 0.0) 0 (quotient 1000 W) W))
+
+; ---------------------------------------------------------------- episodes
+; The behaviour of the walk does not depend on the value estimate, so an episode
+; is generated first into traj (non-terminal states S_0 .. S_{T-1}) and the
+; updates are applied afterwards in time order; this gives the same weights as
+; updating online, because every update at time tau reads the weights left by
+; the updates before it.
+(define traj (make-vector 100000 0))
+(define last-reward (make-vector 1 0.0))
+(define (w1k-last-reward) (vector-ref last-reward 0))
+
+(define (gen! s t)
+  (vector-set! traj t s)
+  (let ((s2 (w1k-step! s)))
+    (if (w1k-terminal? s2)
+        (begin (vector-set! last-reward 0 (w1k-reward s2)) (+ t 1))
+        (gen! s2 (+ t 1)))))
+; (w1k-episode!) → T, the number of non-terminal states visited
+(define (w1k-episode!) (gen! w1k-start 0))
+
+; Gradient Monte Carlo (Sec 9.3): gamma = 1 and only the last reward is non-zero,
+; so G_t = final reward for every t. mu (or #f) counts state visits (Fig 9.1).
+(define (mc-sweep! tc G t T alpha mu)
+  (if (< t T)
+      (let ((s (vector-ref traj t)))
+        (tc-update! tc s (* alpha (- G (tc-value tc s))))
+        (if mu (vec-add-at! mu s 1) #f)
+        (mc-sweep! tc G (+ t 1) T alpha mu))
+      T))
+(define (gradient-mc! tc alpha mu)
+  (let ((T (w1k-episode!)))
+    (mc-sweep! tc (w1k-last-reward) 0 T alpha mu)))
+
+; Semi-gradient n-step TD (Sec 9.3 / 7.1): G = R_final if tau+n >= T, else
+; v(S_{tau+n}) (all intermediate rewards are 0, gamma = 1).
+(define (td-sweep! tc n tau T alpha)
+  (if (< tau T)
+      (let* ((s (vector-ref traj tau))
+             (G (if (>= (+ tau n) T) (w1k-last-reward) (tc-value tc (vector-ref traj (+ tau n))))))
+        (tc-update! tc s (* alpha (- G (tc-value tc s))))
+        (td-sweep! tc n (+ tau 1) T alpha))
+      T))
+(define (semi-gradient-td! tc n alpha)
+  (let ((T (w1k-episode!)))
+    (td-sweep! tc n 0 T alpha)))
+
+; ---------------------------------------------------------------- coarse coding
+; Fig 9.8: 50 interval features of width w on [0, 2), evenly spaced (feature i
+; covers [i*step, i*step + w), step = (2 - w)/49). One pass of LMS over the samples;
+; each update uses alpha / (number of active features).
+; cc = #(w step weights)
+(define (cc-new w) (vector w (/ (- 2.0 w) 49.0) (make-vector 50 0.0)))
+
+(define (cc-lo cc x) (max 0 (inexact->exact (floor (/ (- x (vector-ref cc 0)) (vector-ref cc 1))))))
+(define (cc-hi cc x) (min 49 (inexact->exact (floor (/ x (vector-ref cc 1))))))
+(define (cc-in? cc i x)
+  (let ((l (* i (vector-ref cc 1))))
+    (if (<= l x) (< x (+ l (vector-ref cc 0))) #f)))
+
+; sum of active weights (mode 0) or count of active features (mode 1)
+(define (cc-acc cc x i hi mode acc)
+  (if (<= i hi)
+      (cc-acc cc x (+ i 1) hi mode
+              (if (cc-in? cc i x) (+ acc (if (= mode 0) (vector-ref (vector-ref cc 2) i) 1)) acc))
+      acc))
+(define (cc-value cc x) (cc-acc cc x (cc-lo cc x) (cc-hi cc x) 0 0.0))
+(define (cc-count cc x) (cc-acc cc x (cc-lo cc x) (cc-hi cc x) 1 0))
+
+(define (cc-add! cc x i hi d)
+  (if (<= i hi)
+      (begin (if (cc-in? cc i x) (vec-add-at! (vector-ref cc 2) i d) #f)
+             (cc-add! cc x (+ i 1) hi d))
+      #t))
+
+(define (square-wave x) (if (< 0.5 x) (if (< x 1.5) 1.0 0.0) 0.0))
+
+; one LMS pass over m fresh uniform samples
+(define (cc-train! cc m alpha)
+  (if (> m 0)
+      (let* ((x (* 2.0 (rng-uniform!)))
+             (c (cc-count cc x)))
+        (if (> c 0)
+            (cc-add! cc x (cc-lo cc x) (cc-hi cc x)
+                     (/ (* alpha (- (square-wave x) (cc-value cc x))) (* 1.0 c)))
+            #f)
+        (cc-train! cc (- m 1) alpha))
+      cc))
+
+; mean absolute error vs the square wave on the grid 0.005, 0.015, ..., 1.995
+(define (cc-err cc i acc)
+  (if (< i 200)
+      (let ((x (+ 0.005 (* 0.01 i))))
+        (cc-err cc (+ i 1) (+ acc (abs (- (cc-value cc x) (square-wave x))))))
+      (/ acc 200.0)))
+(define (cc-mae cc) (cc-err cc 0 0.0))

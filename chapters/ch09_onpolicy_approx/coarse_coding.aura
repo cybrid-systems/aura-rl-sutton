@@ -1,0 +1,43 @@
+; Chapter 9 — coarse coding: width of the features (Example 9.3, Figure 9.8).
+; Learn the square wave (1 on (0.5, 1.5), 0 elsewhere on [0, 2)) from uniform samples
+; with 50 interval features of width 0.2 (narrow), 0.4 (medium) or 1.0 (broad), one
+; LMS pass, alpha = 0.2 / (number of active features). Broad features generalise
+; widely early on; with many samples all three widths approach the same function:
+; the feature width shapes early learning, not the final fit.
+;
+; Knobs: RL_MAX_SAMPLES (largest sample count, default 10240 as in the book), RL_SEED.
+
+(require "rl/rng" all:)
+(require "rl/vec" all:)
+(require "rl/knobs" all:)
+(require "algos/approx" all:)
+
+(define max-samples (env-int "RL_MAX_SAMPLES" 10240))
+(rng-seed! (env-int "RL_SEED" 2026))
+(define widths (cons 0.2 (cons 0.4 (cons 1.0 '()))))
+
+(define (show cc x)
+  (if (< x 2.0)
+      (begin (display (string-pad-left (number->string (round-to (cc-value cc x) 2)) 6)) (show cc (+ x 0.2)))
+      #t))
+(define (per-width m l)
+  (if (null? l) #t
+      (let ((cc (cc-train! (cc-new (car l)) m 0.2)))
+        (display (string-pad-left (number->string m) 7))
+        (display (string-pad-left (number->string (car l)) 7))
+        (display (string-pad-left (number->string (round-to (cc-mae cc) 3)) 7)) (display " |")
+        (show cc 0.1) (newline)
+        (per-width m (cdr l)))))
+(define (per-m m)
+  (if (<= m max-samples) (begin (per-width m widths) (per-m (* m 4))) #t))
+
+(define t0 (current-time-ms))
+(display "Figure 9.8 — coarse coding of a square wave: learned value at x = 0.1, 0.3, ..., 1.9") (newline)
+(display "samples  width    MAE |") (show (cc-new 1.0) 0.1) (display "  <- (untrained)") (newline)
+(display "                 target |")
+(define (tgt x) (if (< x 2.0) (begin (display (string-pad-left (number->string (square-wave x)) 6)) (tgt (+ x 0.2))) #t))
+(tgt 0.1) (newline)
+(per-m 10)
+(display "MAE = mean |v(x) - target| on a grid of 200 points") (newline)
+(display "(") (display (- (current-time-ms) t0)) (display " ms)") (newline)
+(display "done") (newline)

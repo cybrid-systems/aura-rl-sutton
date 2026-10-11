@@ -1,0 +1,57 @@
+; Chapter 9 — tile coding vs state aggregation on the 1000-state random walk
+; (Figure 9.10). Gradient MC; tiles 200 states wide. State aggregation is one tiling
+; (5 groups); tile coding uses several tilings offset by a few states. As in the
+; book, the step size is fixed and the per-tile step is alpha / (number of tilings),
+; so both start at the same effective rate (book: alpha = 1e-4 for 5 000 episodes;
+; default here 2e-4 for 5 000). Multiple tilings give a finer v and a lower
+; asymptotic error than the single tiling.
+;
+; Knobs: RL_EPISODES (default 5000, as in the book), RL_ALPHA (2e-4), RL_TILINGS
+; (default 10; book 50), RL_OFFSET (default 20 states; book 4), RL_EVERY (RMS print
+; interval, 500), RL_SEED.
+
+(require "rl/rng" all:)
+(require "rl/vec" all:)
+(require "rl/knobs" all:)
+(require "oracle/walk1000-exact" all:)
+(require "algos/approx" all:)
+
+(define episodes (env-int "RL_EPISODES" 5000))
+(define alpha (env-float "RL_ALPHA" 0.0002))
+(define K (env-int "RL_TILINGS" 10))
+(define off (env-int "RL_OFFSET" 20))
+(define every (env-int "RL_EVERY" 500))
+(rng-seed! (env-int "RL_SEED" 2026))
+
+(define (run! tc k curve)
+  (if (<= k episodes)
+      (begin (gradient-mc! tc alpha #f)
+             (if (= 0 (modulo k every)) (vector-set! curve (- (quotient k every) 1) (tc-rms tc w1k-true 1000)) #f)
+             (run! tc (+ k 1) curve))
+      curve))
+
+(define t0 (current-time-ms))
+(define agg (tc-aggregation 1000 200))
+(define tiles (tc-tilings 1000 200 off K))
+(define ca (run! agg 1 (make-vector (quotient episodes every) 0.0)))
+(define ct (run! tiles 1 (make-vector (quotient episodes every) 0.0)))
+
+(display "Figure 9.10 — gradient MC, tiles 200 states wide, alpha = ") (display alpha) (display ": RMS error vs v_pi") (newline)
+(display " episode  aggregation (1 tiling)  tile coding (") (display K) (display " tilings, offset ")
+(display off) (display ")") (newline)
+(define (row i)
+  (if (< i (vector-length ca))
+      (begin (display (string-pad-left (number->string (* (+ i 1) every)) 8))
+             (display (string-pad-left (number->string (round-to (vector-ref ca i) 4)) 24))
+             (display (string-pad-left (number->string (round-to (vector-ref ct i) 4)) 24)) (newline)
+             (row (+ i 1)))
+      #t))
+(row 0)
+(display "v at states 100 / 300 / 500 / 700 / 900: v_pi")
+(define (pv f) (begin (display (fmt (f 100) 3)) (display (fmt (f 300) 3)) (display (fmt (f 500) 3))
+                      (display (fmt (f 700) 3)) (display (fmt (f 900) 3)) (newline)))
+(pv (lambda (s) (vector-ref w1k-true s)))
+(display "                                    aggregation") (pv (lambda (s) (tc-value agg s)))
+(display "                                    tile coding") (pv (lambda (s) (tc-value tiles s)))
+(display "(") (display (- (current-time-ms) t0)) (display " ms)") (newline)
+(display "done") (newline)

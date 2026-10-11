@@ -1,0 +1,33 @@
+; envs/mountain-car.aura — Example 10.1 mountain car.
+;   v' = clip(v + 0.001 a - 0.0025 cos(3 p), -0.07, 0.07)
+;   p' = clip(p + v', -1.2, 0.5); hitting the left wall sets v' = 0
+; Actions 0 / 1 / 2 are full reverse / zero / full forward throttle (a = -1, 0, +1).
+; Reward -1 per step; the episode ends when p' reaches 0.5. Start p ~ U[-0.6, -0.4), v = 0.
+; The state lives in a module-level vector so a step allocates no list
+; (closures / conses are never freed in file mode, cybrid-systems/aura#4459).
+
+(require "rl/rng" all:)
+
+(export mcar-pmin mcar-pmax mcar-vmax mcar-reset! mcar-set! mcar-step! mcar-pos mcar-vel)
+
+(define mcar-pmin -1.2)
+(define mcar-pmax 0.5)
+(define mcar-vmax 0.07)
+(define mcar-state (make-vector 2 0.0))
+
+(define (mcar-pos) (vector-ref mcar-state 0))
+(define (mcar-vel) (vector-ref mcar-state 1))
+
+(define (mcar-set! p v) (vector-set! mcar-state 0 p) (vector-set! mcar-state 1 v) #t)
+(define (mcar-reset!) (mcar-set! (+ -0.6 (* 0.2 (rng-uniform!))) 0.0))
+
+(define (clip x lo hi) (if (< x lo) lo (if (> x hi) hi x)))
+
+; (mcar-step! a) → #t when the goal is reached
+(define (mcar-step! a)
+  (let* ((p (vector-ref mcar-state 0))
+         (v (clip (+ (vector-ref mcar-state 1) (* 0.001 (- a 1)) (* -0.0025 (cos (* 3.0 p))))
+                  (- 0.0 mcar-vmax) mcar-vmax))
+         (p2 (clip (+ p v) mcar-pmin mcar-pmax)))
+    (mcar-set! p2 (if (<= p2 mcar-pmin) 0.0 v))
+    (>= p2 mcar-pmax)))

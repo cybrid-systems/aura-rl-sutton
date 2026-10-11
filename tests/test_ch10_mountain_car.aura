@@ -1,0 +1,68 @@
+; Chapter 10 oracle: mountain car dynamics, the tile coder, and semi-gradient
+; Sarsa learning (Figure 10.2 shape).
+(require "rl/check" all:)
+(require "rl/rng" all:)
+(require "envs/mountain-car" all:)
+(require "algos/semigrad-sarsa" all:)
+
+(rng-seed! 2026)
+
+; --- dynamics
+(mcar-set! -0.5 0.0)
+(mcar-step! 1)
+(check-near "mcar: coasting from (-0.5, 0): v' = -0.0025 cos(-1.5)" (mcar-vel) (* -0.0025 (cos -1.5)) 0.0000000001)
+(check-near "mcar: p' = p + v'" (mcar-pos) (+ -0.5 (* -0.0025 (cos -1.5))) 0.0000000001)
+(mcar-set! -1.19 -0.05)
+(mcar-step! 0)
+(check-true "mcar: the left wall clips p to -1.2 and zeroes v" (if (= (mcar-pos) -1.2) (= (mcar-vel) 0.0) #f))
+(mcar-set! 0.0 0.07)
+(mcar-step! 2)
+(check-true "mcar: velocity clipped at 0.07" (<= (mcar-vel) 0.07))
+(mcar-set! 0.49 0.02)
+(check-true "mcar: reaching p = 0.5 ends the episode" (mcar-step! 2))
+(mcar-set! -0.5 0.0)
+(check-true "mcar: an ordinary step does not end the episode" (not (mcar-step! 2)))
+(define (starts k ok)
+  (if (> k 0)
+      (begin (mcar-reset!)
+             (starts (- k 1) (if ok (if (>= (mcar-pos) -0.6) (if (< (mcar-pos) -0.4) (= (mcar-vel) 0.0) #f) #f) #f)))
+      ok))
+(check-true "mcar: starts in [-0.6, -0.4) at rest" (starts 200 #t))
+
+; --- tile coder
+(define ra (make-vector 8 0))
+(define rb (make-vector 8 0))
+(define (distinct v i j)
+  (cond ((>= i 8) #t)
+        ((>= j 8) (distinct v (+ i 1) (+ i 2)))
+        ((= (vector-ref v i) (vector-ref v j)) #f)
+        (else (distinct v i (+ j 1)))))
+(define (in-range v i) (if (< i 8) (if (>= (vector-ref v i) 0) (if (< (vector-ref v i) 2904) (in-range v (+ i 1)) #f) #f) #t))
+(define (shared a b i k) (if (< i 8) (shared a b (+ i 1) (if (= (vector-ref a i) (vector-ref b i)) (+ k 1) k)) k))
+(mct-tiles! ra 0 -0.5 0.0)
+(check-true "tiles: 8 distinct active tiles, inside the 2904-weight table" (if (distinct ra 0 1) (in-range ra 0) #f))
+(mct-tiles! rb 0 -0.49 0.001)
+(check-range "tiles: a nearby state shares most tiles" (shared ra rb 0 0) 5 8)
+(mct-tiles! rb 0 0.3 0.05)
+(check-true "tiles: a distant state shares none" (= (shared ra rb 0 0) 0))
+(mct-tiles! ra 0 mcar-pmin (- 0.0 mcar-vmax))
+(mct-tiles! rb 0 mcar-pmax mcar-vmax)
+(check-true "tiles: the corners of the state space stay in range" (if (in-range ra 0) (in-range rb 0) #f))
+
+; --- semi-gradient Sarsa, alpha = 0.5/8, 30 episodes
+(define ag (sarsa-new 0.5 1))
+(define first (sarsa-episode! ag 20000))
+(define (eps k acc) (if (< k 29) (eps (+ k 1) (+ acc (if (>= k 19) (sarsa-episode! ag 20000) (begin (sarsa-episode! ag 20000) 0)))) acc))
+(define late (/ (eps 0 0) 10.0))
+(check-true "fig10.2 the first (exploring) episode is long: > 500 steps" (> first 500))
+(check-range "fig10.2 mean steps over episodes 21-30" late 100.0 400.0)
+(check-true "fig10.2 later episodes are much shorter than the first" (< (* 3.0 late) first))
+(check-true "fig10.1 cost-to-go is higher at the bottom at rest than near the goal moving right"
+            (> (sarsa-cost-to-go ag -0.5 0.0) (sarsa-cost-to-go ag 0.4 0.05)))
+(check-range "fig10.1 cost-to-go at (-0.5, 0) after 30 episodes" (sarsa-cost-to-go ag -0.5 0.0) 20.0 200.0)
+
+; --- n-step Sarsa runs and terminates
+(define ag8 (sarsa-new 0.3 8))
+(define s8a (sarsa-episode! ag8 20000))
+(define s8b (sarsa-episode! ag8 20000))
+(check-true "fig10.3 8-step Sarsa episodes terminate below the cap" (if (< s8a 20000) (< s8b 20000) #f))
