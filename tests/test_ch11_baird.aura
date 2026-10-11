@@ -1,0 +1,64 @@
+; Chapter 11 oracle: Baird's counterexample. Expected values for the expected
+; (DP / TDC / emphatic) sweeps come from an independent numpy implementation of
+; the same updates (tests/oracle/baird_expected.py); they are deterministic.
+(require "rl/check" all:)
+(require "rl/rng" all:)
+(require "envs/baird" all:)
+(require "algos/offpolicy-approx" all:)
+
+(rng-seed! 2026)
+
+; --- features
+(define w (bd-init-w))
+(check-near "baird: upper state value 2 w_i + w_8 = 3" (bd-v w 0) 3.0 0.0)
+(check-near "baird: lower state value w_7 + 2 w_8 = 12" (bd-v w 6) 12.0 0.0)
+(check-near "baird: x(upper i) . x(upper i) = 5" (bd-xdot 2 2) 5.0 0.0)
+(check-near "baird: x(upper i) . x(upper j) = 1" (bd-xdot 1 4) 1.0 0.0)
+(check-near "baird: x(upper) . x(lower) = 2" (bd-xdot 3 6) 2.0 0.0)
+(check-near "baird: x(lower) . x(lower) = 5" (bd-xdot 6 6) 5.0 0.0)
+(define w2 (make-vector 8 0.0))
+(bd-add! w2 3 1.0) (bd-add! w2 6 1.0)
+(check-true "baird: bd-add! adds x(s)" (equal? (vector->list w2) (list 0.0 0.0 0.0 2.0 0.0 0.0 1.0 3.0)))
+(define (count-solid k acc) (if (> k 0) (count-solid (- k 1) (+ acc (bd-step!))) acc))
+(check-range "baird: behaviour picks solid about 1/7 of the time" (/ (count-solid 7000 0) 7000.0) 0.12 0.165)
+(check-true "baird: rho is 7 for solid, 0 for dashed" (if (= (bd-rho 1) 7.0) (= (bd-rho 0) 0.0) #f))
+(check-near "baird: initial sqrt(VE)" (bd-ve (bd-init-w)) 5.318 0.001)
+
+; --- Figure 11.2 right: semi-gradient DP diverges (numpy: w_1 = 114.43372, w_8 = 335.00121)
+(define wd (bd-init-w))
+(define (dp k) (if (> k 0) (begin (bd-dp-sweep! wd 0.01) (dp (- k 1))) wd))
+(dp 1000)
+(check-near "fig11.2 DP w_1 after 1000 sweeps" (vector-ref wd 0) 114.43372 0.001)
+(check-near "fig11.2 DP w_7 after 1000 sweeps" (vector-ref wd 6) 6.85003 0.0001)
+(check-near "fig11.2 DP w_8 after 1000 sweeps" (vector-ref wd 7) 335.00121 0.001)
+
+; --- Figure 11.2 left: sample semi-gradient TD diverges
+(define wt (bd-init-w))
+(define st (vector 0))
+(define (td k) (if (> k 0) (begin (bd-td-step! wt st 0.01) (td (- k 1))) wt))
+(td 1000)
+(check-true "fig11.2 semi-gradient off-policy TD: sqrt(VE) grows past 50 in 1000 steps" (> (bd-ve wt) 50.0))
+
+; --- Figure 11.6: expected TDC (numpy: w_1 = 2.135314, w_8 = -2.337956, sqrt(PBE) = 0.0073786)
+(define we (bd-init-w)) (define ve (make-vector 8 0.0))
+(define (etdc k) (if (> k 0) (begin (bd-tdc-sweep! we ve 0.005 0.05) (etdc (- k 1))) we))
+(etdc 1000)
+(check-near "fig11.6 expected TDC w_1" (vector-ref we 0) 2.135314 0.00001)
+(check-near "fig11.6 expected TDC w_8" (vector-ref we 7) -2.337956 0.00001)
+(check-near "fig11.6 expected TDC sqrt(PBE)" (bd-pbe we) 0.0073786 0.000001)
+(check-near "fig11.6 expected TDC sqrt(VE) stays near 1.94" (bd-ve we) 1.93546 0.0001)
+; sample TDC converges in PBE
+(define ws (bd-init-w)) (define vs (make-vector 8 0.0)) (define ss (vector 0))
+(define (tdc k) (if (> k 0) (begin (bd-tdc-step! ws vs ss 0.005 0.05) (tdc (- k 1))) ws))
+(tdc 2000)
+(check-true "fig11.6 sample TDC: sqrt(PBE) below 0.5 after 2000 steps" (< (bd-pbe ws) 0.5))
+(check-range "fig11.6 sample TDC: sqrt(VE) bounded" (bd-ve ws) 0.5 3.5)
+
+; --- Figure 11.7: expected emphatic TD (numpy: w_1 = 22/13, w_8 = -44/13, M -> 100)
+(define wm (bd-init-w)) (define em (vector 0.0))
+(define (etd k) (if (> k 0) (begin (bd-etd-sweep! wm em 0.03) (etd (- k 1))) wm))
+(etd 1000)
+(check-near "fig11.7 emphatic TD w_1 -> 22/13" (vector-ref wm 0) (/ 22.0 13.0) 0.00001)
+(check-near "fig11.7 emphatic TD w_8 -> -44/13" (vector-ref wm 7) (/ -44.0 13.0) 0.00001)
+(check-true "fig11.7 emphatic TD sqrt(VE) -> 0" (< (bd-ve wm) 0.000001))
+(check-near "fig11.7 expected emphasis M -> 1/(1 - gamma) = 100" (vector-ref em 0) 100.0 0.01)

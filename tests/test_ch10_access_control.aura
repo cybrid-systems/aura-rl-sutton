@@ -1,0 +1,36 @@
+; Chapter 10 oracle: access-control queuing (Example 10.2) with differential
+; semi-gradient Sarsa. The optimal average reward 2.7476 and the optimal policy
+; come from relative value iteration (tests/oracle/access_control_rvi.py).
+(require "rl/check" all:)
+(require "rl/rng" all:)
+(require "algos/diff-sarsa" all:)
+
+(rng-seed! 2026)
+(check-true "access: priorities are 1 2 4 8"
+            (if (= (ac-priority 0) 1) (if (= (ac-priority 1) 2) (if (= (ac-priority 2) 4) (= (ac-priority 3) 8) #f) #f) #f))
+
+; a greedy agent with all-zero q rejects (ties go to reject) and never earns reward
+(define z (ac-new 0.0 0.0 0.0))
+(ac-run! z 2000)
+(check-near "access: alpha = beta = eps = 0 always rejects, reward rate 0" (ac-reward-rate z) 0.0 0.0)
+(check-true "access: with no free server only reject is allowed" (= (ac-greedy z 0 3) 0))
+
+; an always-accept agent: q(accept) = 1 everywhere, no learning
+(define acc (ac-new 0.0 0.0 0.0))
+(define (set-accept! k i) (cond ((> k 10) #t) ((> i 3) (set-accept! (+ k 1) 0))
+                                (else (vector-set! (vector-ref acc 0) (+ (* (+ (* k 4) i) 2) 1) 1.0) (set-accept! k (+ i 1)))))
+(set-accept! 0 0)
+(ac-run! acc 20000)
+; long-run busy servers b satisfy b * 0.06 = P(accept) with servers mostly full,
+; so the accept-everything reward rate is about 3.75 * (rate of free servers) < 3.75
+(check-range "access: accept-everything earns between 1 and 3.75 per step" (ac-reward-rate acc) 1.0 3.75)
+
+; learning: alpha = beta = 0.01, eps = 0.1, 60 000 steps
+(define ag (ac-new 0.01 0.01 0.1))
+(ac-run! ag 60000)
+(check-range "fig10.5 learned Rbar after 60k steps, below the optimum 2.748" (ac-rbar ag) 2.2 2.85)
+(check-range "fig10.5 observed reward rate (eps-greedy)" (ac-reward-rate ag) 2.0 2.8)
+(check-true "fig10.5 accepts priority 8 with 3 free servers" (= (ac-greedy ag 3 3) 1))
+(check-true "fig10.5 accepts priority 4 with 5 free servers" (= (ac-greedy ag 5 2) 1))
+(check-true "fig10.5 rejects priority 1 with 1 free server" (= (ac-greedy ag 1 0) 0))
+(check-true "fig10.5 rejects priority 2 with 1 free server" (= (ac-greedy ag 1 1) 0))

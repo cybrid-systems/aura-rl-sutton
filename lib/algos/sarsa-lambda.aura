@@ -1,0 +1,118 @@
+; algos/sarsa-lambda.aura — Chapter 12: Sarsa(lambda) and true online Sarsa(lambda)
+; on mountain car with the tile coder of algos/semigrad-sarsa (8 tilings, 2904
+; weights, alpha per tile = alpha / 8), gamma = 1, greedy actions (Sec 12.7,
+; Fig 12.10, 12.11).
+;
+;   method 0  Sarsa(lambda), replacing trace:    z = gamma lambda z; z_i = 1 for active i
+;   method 1  Sarsa(lambda), accumulating trace: z = gamma lambda z; z_i += 1
+;   method 2  true online Sarsa(lambda), dutch trace (Sec 12.7 box):
+;     z = gamma lambda z + (1 - alpha gamma lambda z.x) x
+;     w += alpha (delta + Q - Q_old) z - alpha (Q - Q_old) x;  Q_old = Q'
+;   methods 0 and 1: w += alpha delta z
+;
+; Traces are sparse: only weights with |z| >= 0.01 are kept in an active list;
+; a trace that decays below that is dropped (set to 0). With lambda = 0.9 that is
+; about 44 steps of history. Without it every step would touch all 2904 weights.
+
+(require "rl/rng" all:)
+(require "envs/mountain-car" all:)
+(require "algos/semigrad-sarsa" all:)
+
+(export sl-new sl-episode! sl-weights)
+
+(define sl-W 2904)
+(define sl-eps 0.01)
+
+; agent = #(w z active flags meta cur nxt method alpha/8 lambda)
+;   meta = #(active-count Q_old)
+(define (sl-new method alpha lam)
+  (vector (make-vector sl-W 0.0) (make-vector sl-W 0.0) (make-vector sl-W 0) (make-vector sl-W 0)
+          (vector 0 0.0) (make-vector 8 0) (make-vector 8 0) method (/ (* 1.0 alpha) 8.0) (* 1.0 lam)))
+(define (sl-weights ag) (vector-ref ag 0))
+
+(define (greedy w ring)
+  (let* ((q0 (mct-q w ring 0 0)) (q1 (mct-q w ring 0 1)) (q2 (mct-q w ring 0 2))
+         (m (max q0 (max q1 q2)))
+         (c (+ (if (= q0 m) 1 0) (if (= q1 m) 1 0) (if (= q2 m) 1 0)))
+         (k (rng-int! c)))
+    (cond ((= q0 m) (if (= k 0) 0 (if (= q1 m) (if (= k 1) 1 2) 2)))
+          ((= q1 m) (if (= k 0) 1 2))
+          (else 2))))
+
+; z . x for the 8 active tiles of action a
+(define (zx z ring a t acc) (if (< t 8) (zx z ring a (+ t 1) (+ acc (vector-ref z (+ a (vector-ref ring t))))) acc))
+
+; z *= g over the active list, dropping entries below sl-eps
+(define (decay! z act fl meta g i)
+  (if (< i (vector-ref meta 0))
+      (let* ((j (vector-ref act i)) (x (* g (vector-ref z j))))
+        (if (< (abs x) sl-eps)
+            (let ((last (- (vector-ref meta 0) 1)))
+              (vector-set! z j 0.0) (vector-set! fl j 0)
+              (vector-set! act i (vector-ref act last))
+              (vector-set! meta 0 last)
+              (decay! z act fl meta g i))
+            (begin (vector-set! z j x) (decay! z act fl meta g (+ i 1)))))
+      #t))
+
+; z_i = mode 0: 1; mode 1: z_i + 1; mode 2: z_i + c  for the active tiles of a
+(define (bump! z act fl meta ring a mode c t)
+  (if (< t 8)
+      (let ((j (+ a (vector-ref ring t))))
+        (if (= (vector-ref fl j) 0)
+            (begin (vector-set! fl j 1) (vector-set! act (vector-ref meta 0) j)
+                   (vector-set! meta 0 (+ 1 (vector-ref meta 0))))
+            #f)
+        (vector-set! z j (cond ((= mode 0) 1.0) ((= mode 1) (+ 1.0 (vector-ref z j))) (else (+ c (vector-ref z j)))))
+        (bump! z act fl meta ring a mode c (+ t 1)))
+      #t))
+
+; w += c z over the active list
+(define (wz! w z act n c i)
+  (if (< i n)
+      (let ((j (vector-ref act i)))
+        (vector-set! w j (+ (vector-ref w j) (* c (vector-ref z j))))
+        (wz! w z act n c (+ i 1)))
+      #t))
+; w += c x
+(define (wx! w ring a c t)
+  (if (< t 8) (let ((j (+ a (vector-ref ring t)))) (vector-set! w j (+ c (vector-ref w j))) (wx! w ring a c (+ t 1))) #t))
+
+(define (copy8! d s t) (if (< t 8) (begin (vector-set! d t (vector-ref s t)) (copy8! d s (+ t 1))) d))
+
+(define (clear-z! z act fl n i)
+  (if (< i n) (let ((j (vector-ref act i))) (vector-set! z j 0.0) (vector-set! fl j 0) (clear-z! z act fl n (+ i 1))) #t))
+
+; one step from (cur, a); returns the step count when the episode ends
+(define (steps! ag a t cap)
+  (let* ((w (vector-ref ag 0)) (z (vector-ref ag 1)) (act (vector-ref ag 2)) (fl (vector-ref ag 3))
+         (meta (vector-ref ag 4)) (cur (vector-ref ag 5)) (nxt (vector-ref ag 6))
+         (method (vector-ref ag 7)) (al (vector-ref ag 8)) (lam (vector-ref ag 9))
+         (Q (mct-q w cur 0 a))
+         (done (mcar-step! a))
+         (a2 (if done 0 (begin (mct-tiles! nxt 0 (mcar-pos) (mcar-vel)) (greedy w nxt))))
+         (Q2 (if done 0.0 (mct-q w nxt 0 a2)))
+         (d (- (+ -1.0 Q2) Q)))
+    (if (= method 2)
+        (let ((c (- 1.0 (* al lam (zx z cur a 0 0.0)))) (Qold (vector-ref meta 1)))
+          (decay! z act fl meta lam 0)
+          (bump! z act fl meta cur a 2 c 0)
+          (wz! w z act (vector-ref meta 0) (* al (- (+ d Q) Qold)) 0)
+          (wx! w cur a (- 0.0 (* al (- Q Qold))) 0)
+          (vector-set! meta 1 Q2))
+        (begin
+          (decay! z act fl meta lam 0)
+          (bump! z act fl meta cur a method 0.0 0)
+          (wz! w z act (vector-ref meta 0) (* al d) 0)))
+    (cond (done (+ t 1))
+          ((>= (+ t 1) cap) (+ t 1))
+          (else (copy8! cur nxt 0) (steps! ag a2 (+ t 1) cap)))))
+
+; one episode from a random start; returns its length (capped at cap)
+(define (sl-episode! ag cap)
+  (let ((meta (vector-ref ag 4)))
+    (clear-z! (vector-ref ag 1) (vector-ref ag 2) (vector-ref ag 3) (vector-ref meta 0) 0)
+    (vector-set! meta 0 0) (vector-set! meta 1 0.0)
+    (mcar-reset!)
+    (mct-tiles! (vector-ref ag 5) 0 (mcar-pos) (mcar-vel))
+    (steps! ag (greedy (vector-ref ag 0) (vector-ref ag 5)) 0 cap)))

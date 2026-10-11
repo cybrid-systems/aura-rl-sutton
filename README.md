@@ -16,10 +16,10 @@ The project also works as a stress test for [Aura](https://github.com/cybrid-sys
 | 6 | TD learning | ✅ Ex 6.2 (TD(0) vs constant-α MC), Fig 6.2 batch updating, 6.5 windy gridworld (Sarsa), 6.6 cliff walking (Sarsa / Q-learning / Expected Sarsa), Fig 6.3 interim / asymptotic α sweep, 6.7 maximization bias (Double Q-learning) |
 | 7 | n-step bootstrapping | ✅ Fig 7.2 n-step TD (19-state random walk); n-step Sarsa, n-step Expected Sarsa, n-step Tree Backup, off-policy IS n-step Sarsa and off-policy n-step Q(σ) on cliff walking |
 | 8 | Planning (Dyna) | ✅ Fig 8.2 Dyna-Q (Dyna maze), Fig 8.4 / 8.5 Dyna-Q vs Dyna-Q+ (blocking / shortcut maze); prioritized sweeping, Fig 8.7 / 8.8 TODO |
-| 9 | On-policy prediction with approximation | ✅ 1000-state random walk: Fig 9.1 gradient MC and Fig 9.2 semi-gradient TD(0) / n-step TD with state aggregation, Fig 9.8 coarse coding, Fig 9.10 tile coding vs aggregation; Fig 9.5 polynomial / Fourier TODO |
-| 10 | On-policy control with approximation | ✅ mountain car with tile coding: Fig 10.1 cost-to-go, Fig 10.2 semi-gradient Sarsa α sweep, Fig 10.3 n-step Sarsa; Fig 10.4 and access control (Fig 10.5) TODO |
-| 11 | Off-policy with approximation | stub |
-| 12 | Eligibility traces | stub |
+| 9 | On-policy prediction with approximation | ✅ 1000-state random walk: Fig 9.1 gradient MC and Fig 9.2 semi-gradient TD(0) / n-step TD with state aggregation, Fig 9.5 polynomial vs Fourier bases, Fig 9.8 coarse coding, Fig 9.10 tile coding vs aggregation |
+| 10 | On-policy control with approximation | ✅ mountain car with tile coding: Fig 10.1 cost-to-go, Fig 10.2 semi-gradient Sarsa α sweep, Fig 10.3 n-step Sarsa, Fig 10.4 n × α sweep; Fig 10.5 differential semi-gradient Sarsa on access control |
+| 11 | Off-policy with approximation | ✅ Baird's counterexample: Fig 11.2 semi-gradient off-policy TD and DP diverge, Fig 11.6 TDC (sample and expected), Fig 11.7 expected emphatic TD |
+| 12 | Eligibility traces | ✅ 19-state walk: Fig 12.3 offline λ-return, Fig 12.6 TD(λ), Fig 12.8 true online TD(λ); mountain car Fig 12.10 Sarsa(λ) with replacing traces and Fig 12.11 replacing / accumulating / true online Sarsa(λ) (small run sizes) |
 
 Each `chapters/chNN_*/README.md` lists the algorithms and figures planned for that chapter. [STATE.txt](STATE.txt) has the same status in key=value form.
 
@@ -53,8 +53,10 @@ scripts/run_chapter.sh 5                # blackjack MC (about 7 min at the defau
 scripts/run_chapter.sh 6                # TD: random walk, batch, windy, cliff, α sweep, max bias (about 35 min)
 scripts/run_chapter.sh 7                # n-step TD / Sarsa / Expected Sarsa / Tree Backup / off-policy IS / Q(σ) (about 40 min)
 scripts/run_chapter.sh 8                # Dyna-Q maze, Dyna-Q vs Dyna-Q+ on blocking / shortcut mazes (about 10 min)
-scripts/run_chapter.sh 9                # 1000-state walk: aggregation, n-step TD, coarse / tile coding (about 10 min, release build)
-scripts/run_chapter.sh 10               # mountain car: semi-gradient Sarsa, n-step Sarsa (about 3 min, release build)
+scripts/run_chapter.sh 9                # 1000-state walk: aggregation, n-step TD, poly / Fourier, coarse / tile coding (about 17 min, release build)
+scripts/run_chapter.sh 10               # mountain car Sarsa / n-step / n × α sweep, access control (about 8 min, release build)
+scripts/run_chapter.sh 11               # Baird's counterexample: semi-gradient TD / DP, TDC, emphatic TD (about 3 s)
+scripts/run_chapter.sh 12               # λ-return, TD(λ), true online TD(λ); Sarsa(λ) on mountain car (about 11 min, release build)
 scripts/run_tests.sh                    # oracle checks against published values
 ```
 

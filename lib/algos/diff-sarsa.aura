@@ -1,0 +1,61 @@
+; algos/diff-sarsa.aura — Chapter 10.3: differential semi-gradient Sarsa on the
+; access-control queuing task (Example 10.2, Figure 10.5).
+;
+; Task: 10 servers; a customer at the head of the queue has priority 1, 2, 4 or 8
+; (uniform). Accepting gives a reward equal to the priority and takes a free
+; server; rejecting gives 0. With no free server the customer is always rejected.
+; After the action each busy server becomes free with probability 0.06. The task
+; is continuing and undiscounted (average reward).
+;
+; The state (free servers 0..10, priority index 0..3) is one-hot coded, so the
+; linear q(s, a) is a table: q[(k*4 + i)*2 + a], a = 0 reject, 1 accept.
+;   delta = R - Rbar + q(S', A') - q(S, A);  Rbar += beta delta;  q(S, A) += alpha delta
+; Per-step helpers are top-level recursion (no named let, cybrid-systems/aura#4459).
+
+(require "rl/rng" all:)
+
+(export ac-servers ac-priority ac-new ac-run! ac-q ac-rbar ac-greedy ac-reward-rate)
+
+(define ac-servers 10)
+(define ac-pfree 0.06)
+(define (ac-priority i) (if (= i 0) 1 (if (= i 1) 2 (if (= i 2) 4 8))))
+
+; agent = #(q alpha beta eps rbar total-reward steps)
+(define (ac-new alpha beta eps)
+  (vector (make-vector (* 11 4 2) 0.0) (* 1.0 alpha) (* 1.0 beta) (* 1.0 eps) 0.0 0.0 0))
+(define (ac-rbar ag) (vector-ref ag 4))
+(define (ac-reward-rate ag) (if (> (vector-ref ag 6) 0) (/ (vector-ref ag 5) (* 1.0 (vector-ref ag 6))) 0.0))
+(define (ac-q ag k i a) (vector-ref (vector-ref ag 0) (+ (* (+ (* k 4) i) 2) a)))
+
+; greedy action (ties → reject); with no free server only reject is allowed
+(define (ac-greedy ag k i)
+  (if (= k 0) 0 (if (> (ac-q ag k i 1) (ac-q ag k i 0)) 1 0)))
+(define (ac-act! ag k i)
+  (if (= k 0) 0
+      (if (< (rng-uniform!) (vector-ref ag 3)) (rng-int! 2) (ac-greedy ag k i))))
+
+; number of the b busy servers that become free this step
+(define (freed b acc) (if (> b 0) (freed (- b 1) (if (< (rng-uniform!) ac-pfree) (+ acc 1) acc)) acc))
+
+; run n steps from (k, i) with action a already chosen; returns the final k
+(define (ac-loop ag n k i a)
+  (if (> n 0)
+      (let* ((r (if (= a 1) (ac-priority i) 0))
+             (k1 (- k a))
+             (k2 (+ k1 (freed (- ac-servers k1) 0)))
+             (i2 (rng-int! 4))
+             (a2 (ac-act! ag k2 i2))
+             (q (vector-ref ag 0))
+             (ix (+ (* (+ (* k 4) i) 2) a))
+             (d (+ (- r (vector-ref ag 4)) (- (vector-ref q (+ (* (+ (* k2 4) i2) 2) a2)) (vector-ref q ix)))))
+        (vector-set! ag 4 (+ (vector-ref ag 4) (* (vector-ref ag 2) d)))
+        (vector-set! q ix (+ (vector-ref q ix) (* (vector-ref ag 1) d)))
+        (vector-set! ag 5 (+ (vector-ref ag 5) r))
+        (vector-set! ag 6 (+ (vector-ref ag 6) 1))
+        (ac-loop ag (- n 1) k2 i2 a2))
+      k))
+
+; (ac-run! ag n) — n steps starting with all servers free
+(define (ac-run! ag n)
+  (let ((i (rng-int! 4)))
+    (ac-loop ag n ac-servers i (ac-act! ag ac-servers i))))

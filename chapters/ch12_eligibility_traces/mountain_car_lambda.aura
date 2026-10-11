@@ -1,0 +1,56 @@
+; Chapter 12 — Sarsa(lambda) on mountain car with 8 tilings (Sec 12.7).
+;   Figure 12.10: Sarsa(lambda) with replacing traces for several lambda, mean steps
+;                 per episode over the first E episodes (book: first 50, 100 runs,
+;                 alpha swept; intermediate lambda ~0.9 is best).
+;   Figure 12.11: lambda = 0.9: true online Sarsa(lambda) vs Sarsa(lambda) with
+;                 accumulating and replacing traces across alpha (accumulating
+;                 traces become unstable at large alpha; true online is best).
+; Traces below 0.01 are dropped (see lib/algos/sarsa-lambda.aura).
+;
+; Knobs: RL_RUNS (default 1), RL_EPISODES (10), RL_CAP (3000), RL_SEED,
+; RL_FIG ("both", "10" or "11").
+
+(require "rl/rng" all:)
+(require "rl/vec" all:)
+(require "rl/knobs" all:)
+(require "algos/sarsa-lambda" all:)
+
+(define runs (env-int "RL_RUNS" 1))
+(define episodes (env-int "RL_EPISODES" 10))
+(define cap (env-int "RL_CAP" 3000))
+(define seed (env-int "RL_SEED" 2026))
+(define fig (let ((s (getenv "RL_FIG"))) (if (string? s) s "both")))
+
+(define (eps-sum ag k acc) (if (< k episodes) (eps-sum ag (+ k 1) (+ acc (sl-episode! ag cap))) acc))
+(define (runs-sum m alpha lam r acc)
+  (if (< r runs)
+      (begin (rng-seed! (+ seed r)) (runs-sum m alpha lam (+ r 1) (+ acc (eps-sum (sl-new m alpha lam) 0 0))))
+      acc))
+(define (mean-steps m alpha lam) (/ (* 1.0 (runs-sum m alpha lam 0 0)) (* 1.0 runs episodes)))
+(define (cellv x) (display (string-pad-left (number->string (round-to x 1)) 10)))
+
+(define (f10 ls)
+  (if (null? ls) #t
+      (begin (display (string-pad-left (number->string (car ls)) 8)) (cellv (mean-steps 0 0.5 (car ls))) (newline)
+             (f10 (cdr ls)))))
+(define (f11 as)
+  (if (null? as) #t
+      (begin (display (string-pad-left (number->string (car as)) 10))
+             (cellv (mean-steps 0 (car as) 0.9)) (display "    ") (cellv (mean-steps 1 (car as) 0.9))
+             (display "  ") (cellv (mean-steps 2 (car as) 0.9)) (newline)
+             (f11 (cdr as)))))
+(define (fig10)
+  (display "Figure 12.10 — Sarsa(lambda), replacing traces, alpha = 0.5/8; mean steps over the first ")
+  (display episodes) (display " episodes (") (display runs) (display " run(s), cap ") (display cap) (display ")") (newline)
+  (display "  lambda     steps") (newline)
+  (f10 (cons 0.0 (cons 0.68 (cons 0.84 (cons 0.92 (cons 0.96 '())))))))
+(define (fig11)
+  (display "Figure 12.11 — lambda = 0.9, mean steps over the first ") (display episodes) (display " episodes") (newline)
+  (display "  alpha x8   replacing  accumulating  true-online") (newline)
+  (f11 (cons 0.2 (cons 0.5 (cons 0.9 '())))))
+
+(define t0 (current-time-ms))
+(if (equal? fig "11") #f (fig10))
+(if (equal? fig "10") #f (fig11))
+(display "(") (display (- (current-time-ms) t0)) (display " ms)") (newline)
+(display "done") (newline)

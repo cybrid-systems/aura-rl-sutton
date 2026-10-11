@@ -1,0 +1,70 @@
+; Chapter 12 — lambda methods on the 19-state random walk (Example 7.1 walk,
+; gamma = 1, left end -1, right end +1). Error = RMS over the 19 states after each
+; episode, averaged over the first 10 episodes and over runs, for a grid of
+; (lambda, alpha):
+;   Figure 12.3  offline lambda-return algorithm
+;   Figure 12.6  TD(lambda), accumulating traces
+;   Figure 12.8  true online TD(lambda), dutch traces
+; The book averages 100 runs; true online TD(lambda) matches the offline
+; lambda-return closely, TD(lambda) degrades at large alpha with large lambda.
+; Diverging configurations are capped at an error of 1.0 per episode.
+;
+; Knobs: RL_RUNS (default 3; book 100), RL_EPISODES (10), RL_SEED,
+; RL_METHODS ("0 1 2" = offline lambda-return, TD(lambda), true online).
+
+(require "rl/rng" all:)
+(require "rl/vec" all:)
+(require "rl/knobs" all:)
+(require "algos/traces" all:)
+
+(define runs (env-int "RL_RUNS" 3))
+(define episodes (env-int "RL_EPISODES" 10))
+(rng-seed! (env-int "RL_SEED" 2026))
+
+(define lambdas (vector 0.0 0.4 0.8 0.9 0.95 0.975 0.99 1.0))
+(define alphas (vector 0.1 0.2 0.4 0.6 0.8 1.0))
+(define nL (vector-length lambdas))
+(define nA (vector-length alphas))
+(define names (vector "Figure 12.3 — offline lambda-return algorithm"
+                      "Figure 12.6 — TD(lambda), accumulating traces"
+                      "Figure 12.8 — true online TD(lambda), dutch traces"))
+
+; acc[method][l][a] summed over runs; every run draws its episodes once and
+; replays them for every configuration
+(define acc (make-vector (* 3 nL nA) 0.0))
+(define (ix m l a) (+ (* (+ (* m nL) l) nA) a))
+(define (sweep! m l a)
+  (cond ((>= m 3) #t)
+        ((>= l nL) (sweep! (+ m 1) 0 0))
+        ((>= a nA) (sweep! m (+ l 1) 0))
+        (else (vec-add-at! acc (ix m l a) (lam-run-config m (vector-ref lambdas l) (vector-ref alphas a)))
+              (sweep! m l (+ a 1)))))
+(define (all-runs r) (if (< r runs) (begin (lam-gen-run! episodes) (sweep! 0 0 0) (all-runs (+ r 1))) #t))
+
+(define t0 (current-time-ms))
+(all-runs 0)
+(define (cell m l a) (/ (vector-ref acc (ix m l a)) (* 1.0 runs episodes)))
+(define (hdr a) (if (< a nA) (begin (display (string-pad-left (string-append "a=" (number->string (vector-ref alphas a))) 8)) (hdr (+ a 1))) (newline)))
+(define (row m l a) (if (< a nA) (begin (display (string-pad-left (number->string (round-to (cell m l a) 3)) 8)) (row m l (+ a 1))) (newline)))
+(define (best m l a b) (if (< a nA) (best m l (+ a 1) (min b (cell m l a))) b))
+(define (table m l)
+  (if (< l nL)
+      (begin (display (string-pad-left (number->string (vector-ref lambdas l)) 7)) (row m l 0) (table m (+ l 1)))
+      #t))
+(define (show m)
+  (if (< m 3)
+      (begin (display (vector-ref names m)) (display " (") (display runs) (display " runs x ")
+             (display episodes) (display " episodes)") (newline)
+             (display " lambda") (hdr 0) (table m 0) (show (+ m 1)))
+      #t))
+(show 0)
+(display "best error per lambda (offline / TD(lambda) / true online):") (newline)
+(define (bests l)
+  (if (< l nL)
+      (begin (display (string-pad-left (number->string (vector-ref lambdas l)) 7))
+             (display (fmt (best 0 l 0 9.0) 3)) (display (fmt (best 1 l 0 9.0) 3)) (display (fmt (best 2 l 0 9.0) 3)) (newline)
+             (bests (+ l 1)))
+      #t))
+(bests 0)
+(display "(") (display (- (current-time-ms) t0)) (display " ms)") (newline)
+(display "done") (newline)

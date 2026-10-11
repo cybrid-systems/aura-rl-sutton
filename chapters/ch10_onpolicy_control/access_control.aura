@@ -1,0 +1,45 @@
+; Chapter 10 — differential semi-gradient Sarsa on the access-control queuing task
+; (Example 10.2, Figure 10.5). alpha = beta = 0.01, epsilon = 0.1 as in the book.
+; The book runs 2 million steps; the default here is 400 000 (about 2 min on a
+; RelWithDebInfo build). The optimal average reward of this task (relative value
+; iteration, tests/oracle/access_control_rvi.py) is 2.7476; the optimal policy
+; never accepts priority 1, accepts priority 2 only with 4+ free servers, and
+; accepts priorities 4 and 8 whenever a server is free.
+;
+; Knobs: RL_STEPS (default 400000; book 2000000), RL_SEED.
+
+(require "rl/rng" all:)
+(require "rl/vec" all:)
+(require "rl/knobs" all:)
+(require "algos/diff-sarsa" all:)
+
+(define steps (env-int "RL_STEPS" 400000))
+(rng-seed! (env-int "RL_SEED" 2026))
+
+(define t0 (current-time-ms))
+(define ag (ac-new 0.01 0.01 0.1))
+(ac-run! ag steps)
+
+(display "Figure 10.5 — access control, differential semi-gradient Sarsa, ") (display steps) (display " steps") (newline)
+(display "learned Rbar = ") (display (round-to (ac-rbar ag) 3))
+(display ", observed reward rate = ") (display (round-to (ac-reward-rate ag) 3))
+(display "  (optimal average reward 2.748)") (newline)
+(display "policy (1 = accept), columns = number of free servers") (newline)
+(display "priority") 
+(define (hdr k) (if (<= k 10) (begin (display (string-pad-left (number->string k) 4)) (hdr (+ k 1))) (newline)))
+(hdr 0)
+(define (prow i k) (if (<= k 10) (begin (display (string-pad-left (number->string (ac-greedy ag k i)) 4)) (prow i (+ k 1))) (newline)))
+(define (vrow i k)
+  (if (<= k 10)
+      (begin (display (string-pad-left (number->string (round-to (max (ac-q ag k i 0) (if (> k 0) (ac-q ag k i 1) (ac-q ag k i 0))) 1)) 7))
+             (vrow i (+ k 1)))
+      (newline)))
+(define (rows f i) (if (>= i 0) (begin (display (string-pad-left (number->string (ac-priority i)) 8)) (f i 0) (rows f (- i 1))) #t))
+(rows prow 3)
+(display "value of the best action max_a q(s, a)") (newline)
+(display "priority")
+(define (hdr2 k) (if (<= k 10) (begin (display (string-pad-left (number->string k) 7)) (hdr2 (+ k 1))) (newline)))
+(hdr2 0)
+(rows vrow 3)
+(display "(") (display (- (current-time-ms) t0)) (display " ms)") (newline)
+(display "done") (newline)

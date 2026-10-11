@@ -1,0 +1,49 @@
+; algos/basis.aura — Chapter 9.5.2: polynomial and Fourier bases for the
+; 1000-state random walk, learned with gradient Monte Carlo (Fig 9.5).
+;
+; State s in 1..1000 is normalised to x = s / 1000. Order n gives n+1 features:
+;   polynomial  x_i(s) = x^i          i = 0..n
+;   Fourier     x_i(s) = cos(i pi x)  i = 0..n
+; The feature table (1000 x (n+1)) is built once, so an update is two passes of
+; n+1 multiply-adds. Gradient MC: gamma = 1 and only the final reward is non-zero,
+; so every visited state is updated towards that reward.
+
+(require "rl/rng" all:)
+(require "envs/walk1000" all:)
+
+(export bs-new bs-value bs-mc-episode! bs-rms)
+
+; bs = #(n+1 features weights alpha)
+(define (pow x i) (if (= i 0) 1.0 (* x (pow x (- i 1)))))
+(define (feat kind x i) (if (= kind 0) (pow x i) (cos (* 3.141592653589793 i x))))
+(define (fill-row! tab kind s m i)
+  (if (< i m)
+      (begin (vector-set! tab (+ (* (- s 1) m) i) (feat kind (/ (* 1.0 s) 1000.0) i))
+             (fill-row! tab kind s m (+ i 1)))
+      #t))
+(define (fill! tab kind s m) (if (<= s 1000) (begin (fill-row! tab kind s m 0) (fill! tab kind (+ s 1) m)) tab))
+; kind 0 polynomial, 1 Fourier
+(define (bs-new kind n alpha)
+  (vector (+ n 1) (fill! (make-vector (* 1000 (+ n 1)) 0.0) kind 1 (+ n 1)) (make-vector (+ n 1) 0.0) (* 1.0 alpha)))
+
+(define (dot w tab b i m acc) (if (< i m) (dot w tab b (+ i 1) m (+ acc (* (vector-ref w i) (vector-ref tab (+ b i))))) acc))
+(define (bs-value bs s)
+  (let ((m (vector-ref bs 0))) (dot (vector-ref bs 2) (vector-ref bs 1) (* (- s 1) m) 0 m 0.0)))
+(define (axpy! w tab b i m c)
+  (if (< i m) (begin (vector-set! w i (+ (vector-ref w i) (* c (vector-ref tab (+ b i))))) (axpy! w tab b (+ i 1) m c)) w))
+(define (upd! bs s G)
+  (let ((m (vector-ref bs 0)))
+    (axpy! (vector-ref bs 2) (vector-ref bs 1) (* (- s 1) m) 0 m (* (vector-ref bs 3) (- G (bs-value bs s))))))
+
+(define traj (make-vector 100000 0))
+(define (gen! s t)
+  (vector-set! traj t s)
+  (let ((s2 (w1k-step! s)))
+    (if (w1k-terminal? s2) (cons (+ t 1) (w1k-reward s2)) (gen! s2 (+ t 1)))))
+(define (sweep! bs t T G) (if (< t T) (begin (upd! bs (vector-ref traj t) G) (sweep! bs (+ t 1) T G)) T))
+; one episode of gradient MC; returns its length
+(define (bs-mc-episode! bs)
+  (let ((r (gen! w1k-start 0))) (sweep! bs 0 (car r) (cdr r))))
+
+(define (sq bs truth s acc) (if (<= s 1000) (let ((e (- (bs-value bs s) (vector-ref truth s)))) (sq bs truth (+ s 1) (+ acc (* e e)))) acc))
+(define (bs-rms bs truth) (sqrt (/ (sq bs truth 1 0.0) 1000.0)))

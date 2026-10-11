@@ -1,0 +1,47 @@
+; envs/baird.aura — Baird's counterexample (Example 11.1, Figure 11.1).
+; Seven states: 0..5 are the upper states, 6 is the lower state. Two actions:
+; dashed (0) goes to one of the six upper states uniformly, solid (1) goes to the
+; lower state. Every reward is 0, gamma = 0.99. The behaviour policy picks dashed
+; with probability 6/7 and solid with probability 1/7; the target policy always
+; picks solid. Features (8 weights): upper state i has x = 2 e_i + e_7, the lower
+; state has x = e_6 + 2 e_7. All true values are 0.
+;
+; Feature vectors are never materialised: bd-v computes w . x(s) and bd-add!
+; adds c x(s) to a weight vector (no per-step allocation, cybrid-systems/aura#4459).
+
+(require "rl/rng" all:)
+
+(export bd-states bd-lower bd-gamma bd-init-w bd-v bd-add! bd-xdot bd-step! bd-next bd-rho)
+
+(define bd-states 7)
+(define bd-lower 6)
+(define bd-gamma 0.99)
+
+(define (bd-init-w) (vector 1.0 1.0 1.0 1.0 1.0 1.0 10.0 1.0))
+
+; w . x(s)
+(define (bd-v w s)
+  (if (< s 6)
+      (+ (* 2.0 (vector-ref w s)) (vector-ref w 7))
+      (+ (vector-ref w 6) (* 2.0 (vector-ref w 7)))))
+; x(s) . x(s2) — needed by TDC
+(define (bd-xdot s s2)
+  (cond ((if (< s 6) (= s s2) #f) 5.0)
+        ((if (< s 6) (< s2 6) #f) 1.0)
+        ((if (= s 6) (= s2 6) #f) 5.0)
+        (else 2.0)))
+; w += c x(s)
+(define (bd-add! w s c)
+  (if (< s 6)
+      (begin (vector-set! w s (+ (vector-ref w s) (* 2.0 c)))
+             (vector-set! w 7 (+ (vector-ref w 7) c)))
+      (begin (vector-set! w 6 (+ (vector-ref w 6) c))
+             (vector-set! w 7 (+ (vector-ref w 7) (* 2.0 c)))))
+  #t)
+
+; behaviour action: 1 (solid) w.p. 1/7
+(define (bd-step!) (if (= (rng-int! 7) 0) 1 0))
+; next state for an action
+(define (bd-next a) (if (= a 1) bd-lower (rng-int! 6)))
+; importance ratio pi(a|s) / b(a|s)
+(define (bd-rho a) (if (= a 1) 7.0 0.0))

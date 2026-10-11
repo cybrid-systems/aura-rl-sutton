@@ -1,0 +1,55 @@
+; Chapter 9 — Figure 9.5: polynomial vs Fourier bases on the 1000-state random
+; walk, gradient Monte Carlo, orders 5, 10 and 20, alpha = 1e-4 (polynomial) and
+; 5e-5 (Fourier) as in the book. RMS error over the 1000 states at checkpoints.
+; The book (30 runs x 5000 episodes) finds Fourier much better than polynomial,
+; with higher orders better for Fourier.
+;
+; Knobs: RL_EPISODES (default 1000; book 5000), RL_RUNS (1; book 30),
+; RL_ORDERS ("5 10 20"), RL_SEED.
+
+(require "rl/rng" all:)
+(require "rl/vec" all:)
+(require "rl/knobs" all:)
+(require "oracle/walk1000-exact" all:)
+(require "algos/basis" all:)
+
+(define episodes (env-int "RL_EPISODES" 1000))
+(define runs (env-int "RL_RUNS" 1))
+(define seed (env-int "RL_SEED" 2026))
+(define orders
+  (let ((s (getenv "RL_ORDERS")))
+    (if (string? s)
+        (map string->number (string-split s " "))
+        (cons 5 (cons 10 (cons 20 (quote ())))))))
+
+(define ck (vector (max 1 (quotient episodes 10)) (max 1 (quotient episodes 2)) episodes))
+; acc[c] summed over runs
+(define (train! bs k c acc)
+  (cond ((> k episodes) acc)
+        (else (bs-mc-episode! bs)
+              (if (if (< c 3) (= k (vector-ref ck c)) #f)
+                  (begin (vec-add-at! acc c (bs-rms bs w1k-true)) (train! bs (+ k 1) (+ c 1) acc))
+                  (train! bs (+ k 1) c acc)))))
+(define (curve kind n)
+  (let ((acc (make-vector 3 0.0)))
+    (define (r i) (if (< i runs) (begin (rng-seed! (+ seed i)) (train! (bs-new kind n (if (= kind 0) 0.0001 0.00005)) 1 0 acc) (r (+ i 1))) acc))
+    (vec-scale! (r 0) (/ 1.0 runs))))
+
+(define t0 (current-time-ms))
+(display "Figure 9.5 — gradient MC with polynomial / Fourier bases, RMS error vs v_pi (")
+(display runs) (display " run(s))") (newline)
+(display "  basis    order") (display (string-pad-left (string-append "ep " (number->string (vector-ref ck 0))) 9))
+(display (string-pad-left (string-append "ep " (number->string (vector-ref ck 1))) 9))
+(display (string-pad-left (string-append "ep " (number->string (vector-ref ck 2))) 9)) (newline)
+(define (show kind label os)
+  (if (null? os) #t
+      (let ((c (curve kind (car os))))
+        (display (string-pad-left label 7)) (display (string-pad-left (number->string (car os)) 9))
+        (display (string-pad-left (number->string (round-to (vector-ref c 0) 4)) 9))
+        (display (string-pad-left (number->string (round-to (vector-ref c 1) 4)) 9))
+        (display (string-pad-left (number->string (round-to (vector-ref c 2) 4)) 9)) (newline)
+        (show kind label (cdr os)))))
+(show 0 "poly" orders)
+(show 1 "fourier" orders)
+(display "(") (display (- (current-time-ms) t0)) (display " ms)") (newline)
+(display "done") (newline)

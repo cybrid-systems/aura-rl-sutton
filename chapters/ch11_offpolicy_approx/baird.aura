@@ -1,0 +1,90 @@
+; Chapter 11 — Baird's counterexample (Example 11.1).
+;   Figure 11.2 left:  semi-gradient off-policy TD(0), alpha = 0.01, 1000 steps
+;   Figure 11.2 right: semi-gradient DP (expected updates), alpha = 0.01, 1000 sweeps
+;   Figure 11.6:       TDC, alpha = 0.005, beta = 0.05 (sample and expected)
+;   Figure 11.7:       expected emphatic TD, alpha = 0.03
+; w starts at (1,1,1,1,1,1,10,1); all true values are 0. Semi-gradient TD and DP
+; diverge; TDC drives sqrt(PBE) to 0 (sqrt(VE) does not go to 0 in 1000 sweeps);
+; emphatic TD drives sqrt(VE) to 0.
+;
+; Knobs: RL_STEPS (default 1000), RL_SEED.
+
+(require "rl/rng" all:)
+(require "rl/vec" all:)
+(require "rl/knobs" all:)
+(require "envs/baird" all:)
+(require "algos/offpolicy-approx" all:)
+
+(define steps (env-int "RL_STEPS" 1000))
+(rng-seed! (env-int "RL_SEED" 2026))
+(define every (max 1 (quotient steps 10)))
+
+(define (w-row k w)
+  (display (string-pad-left (number->string k) 6))
+  (display (fmt (vector-ref w 0) 2)) (display (fmt (vector-ref w 5) 2))
+  (display (fmt (vector-ref w 6) 2)) (display (fmt (vector-ref w 7) 2))
+  (display (string-pad-left (number->string (round-to (bd-ve w) 3)) 10))
+  (display (string-pad-left (number->string (round-to (bd-pbe w) 4)) 10))
+  (newline))
+(define (w-hdr label)
+  (display label) (newline)
+  (display "  step     w1     w6     w7     w8   sqrt(VE) sqrt(PBE)") (newline))
+
+(define t0 (current-time-ms))
+
+; Figure 11.2 left: sample semi-gradient off-policy TD(0)
+(w-hdr "Figure 11.2 (left) — semi-gradient off-policy TD(0), alpha = 0.01")
+(define w (bd-init-w))
+(define st (vector (rng-int! 7)))
+(define (td-loop k)
+  (if (< k steps)
+      (begin (bd-td-step! w st 0.01)
+             (if (= 0 (modulo (+ k 1) every)) (w-row (+ k 1) w) #f)
+             (td-loop (+ k 1)))
+      w))
+(w-row 0 w) (td-loop 0)
+
+; Figure 11.2 right: semi-gradient DP
+(w-hdr "Figure 11.2 (right) — semi-gradient DP (expected sweeps), alpha = 0.01")
+(define wd (bd-init-w))
+(define (dp-loop k)
+  (if (< k steps)
+      (begin (bd-dp-sweep! wd 0.01)
+             (if (= 0 (modulo (+ k 1) every)) (w-row (+ k 1) wd) #f)
+             (dp-loop (+ k 1)))
+      wd))
+(w-row 0 wd) (dp-loop 0)
+
+; Figure 11.6: TDC
+(w-hdr "Figure 11.6 (left) — TDC, sample updates, alpha = 0.005, beta = 0.05")
+(define wt (bd-init-w)) (define vt (make-vector 8 0.0)) (define stt (vector (rng-int! 7)))
+(define (tdc-loop k)
+  (if (< k steps)
+      (begin (bd-tdc-step! wt vt stt 0.005 0.05)
+             (if (= 0 (modulo (+ k 1) every)) (w-row (+ k 1) wt) #f)
+             (tdc-loop (+ k 1)))
+      wt))
+(w-row 0 wt) (tdc-loop 0)
+(w-hdr "Figure 11.6 (right) — expected TDC, alpha = 0.005, beta = 0.05")
+(define we (bd-init-w)) (define ve (make-vector 8 0.0))
+(define (etdc-loop k)
+  (if (< k steps)
+      (begin (bd-tdc-sweep! we ve 0.005 0.05)
+             (if (= 0 (modulo (+ k 1) every)) (w-row (+ k 1) we) #f)
+             (etdc-loop (+ k 1)))
+      we))
+(w-row 0 we) (etdc-loop 0)
+
+; Figure 11.7: expected emphatic TD
+(w-hdr "Figure 11.7 — expected emphatic TD, alpha = 0.03 (interest 1)")
+(define wm (bd-init-w)) (define em (vector 0.0))
+(define (etd-loop k)
+  (if (< k steps)
+      (begin (bd-etd-sweep! wm em 0.03)
+             (if (= 0 (modulo (+ k 1) every)) (w-row (+ k 1) wm) #f)
+             (etd-loop (+ k 1)))
+      wm))
+(w-row 0 wm) (etd-loop 0)
+(display "expected emphasis M = ") (display (round-to (vector-ref em 0) 2)) (newline)
+(display "(") (display (- (current-time-ms) t0)) (display " ms)") (newline)
+(display "done") (newline)

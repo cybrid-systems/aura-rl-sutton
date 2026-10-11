@@ -1,0 +1,55 @@
+; Chapter 10 — Figure 10.4: semi-gradient n-step Sarsa on mountain car, mean
+; steps per episode over the first E episodes as a function of alpha (x 8) for
+; several n. The book averages the first 50 episodes over 100 runs; intermediate
+; n with a moderate alpha is best, and large alpha with large n becomes unstable
+; (episodes hit the step cap).
+;
+; Knobs: RL_RUNS (default 1), RL_EPISODES (default 20; book 50), RL_CAP (5000),
+; RL_NS ("1 2 4 8 16"), RL_ALPHAS ("0.2 0.5 0.9", in units of 1/8), RL_SEED.
+
+(require "rl/rng" all:)
+(require "rl/vec" all:)
+(require "rl/knobs" all:)
+(require "algos/semigrad-sarsa" all:)
+
+(define runs (env-int "RL_RUNS" 1))
+(define episodes (env-int "RL_EPISODES" 20))
+(define cap (env-int "RL_CAP" 5000))
+(define seed (env-int "RL_SEED" 2026))
+
+; parse a space-separated list of numbers (string->number per token, aura#4463)
+(define (num-list s)
+  (let ((n (string-length s)))
+    (define (tok i j acc)
+      (cond ((>= j n) (reverse (if (> j i) (cons (string->number (substring s i j)) acc) acc)))
+            ((equal? (substring s j (+ j 1)) " ")
+             (tok (+ j 1) (+ j 1) (if (> j i) (cons (string->number (substring s i j)) acc) acc)))
+            (else (tok i (+ j 1) acc))))
+    (tok 0 0 '())))
+(define (env-list name default) (let ((s (getenv name))) (if (string? s) (num-list s) default)))
+(define ns (env-list "RL_NS" (cons 1 (cons 2 (cons 4 (cons 8 (cons 16 '())))))))
+(define alphas (env-list "RL_ALPHAS" (cons 0.2 (cons 0.5 (cons 0.9 '())))))
+
+(define (eps-sum ag k acc) (if (< k episodes) (eps-sum ag (+ k 1) (+ acc (sarsa-episode! ag cap))) acc))
+(define (runs-sum n alpha r acc)
+  (if (< r runs)
+      (begin (rng-seed! (+ seed r))
+             (runs-sum n alpha (+ r 1) (+ acc (eps-sum (sarsa-new alpha n) 0 0))))
+      acc))
+(define (mean-steps n alpha) (/ (* 1.0 (runs-sum n alpha 0 0)) (* 1.0 runs episodes)))
+
+(define t0 (current-time-ms))
+(display "Figure 10.4 — n-step Sarsa on mountain car, mean steps per episode over the first ")
+(display episodes) (display " episodes (") (display runs) (display " run(s), cap ") (display cap) (display ")") (newline)
+(display "    n")
+(define (hdr as) (if (null? as) (newline)
+                     (begin (display (string-pad-left (string-append "a=" (number->string (car as)) "/8") 11)) (hdr (cdr as)))))
+(hdr alphas)
+(define (row n as)
+  (if (null? as) (newline)
+      (begin (display (string-pad-left (number->string (round-to (mean-steps n (car as)) 1)) 11))
+             (row n (cdr as)))))
+(define (rows l) (if (null? l) #t (begin (display (string-pad-left (number->string (car l)) 5)) (row (car l) alphas) (rows (cdr l)))))
+(rows ns)
+(display "(") (display (- (current-time-ms) t0)) (display " ms)") (newline)
+(display "done") (newline)

@@ -1,0 +1,134 @@
+; algos/traces.aura — Chapter 12: lambda-return and eligibility-trace prediction
+; on the 19-state random walk (Example 7.1 walk: left end pays -1, right end +1,
+; gamma = 1), tabular = linear with one-hot features (Fig 12.3, 12.6, 12.8).
+;
+;   offline lambda-return (Sec 12.1): weights are fixed during the episode; at the
+;     end, G^lambda_t is formed with the episode-start weights by the backward
+;     recursion G^lambda_t = (1-lambda) v(S_{t+1}) + lambda G^lambda_{t+1},
+;     G^lambda_{T-1} = R, and the updates v(S_t) += alpha (G^lambda_t - v(S_t))
+;     are applied in time order.
+;   TD(lambda), accumulating trace (Sec 12.2):
+;     z = lambda z + x;  v += alpha delta z
+;   true online TD(lambda), dutch trace (Sec 12.5):
+;     z = lambda z + (1 - alpha lambda z.x) x
+;     v += alpha (delta + V - V_old) z - alpha (V - V_old) x;  V_old = V(S')
+;
+; The walk does not depend on the estimates, so each run's episodes are generated
+; once into a buffer and every (method, lambda, alpha) configuration replays the
+; same episodes (common random numbers). Loops are top-level recursion
+; (cybrid-systems/aura#4459, #4454).
+
+(require "rl/rng" all:)
+
+(export lam-n lam-truth lam-gen-run! lam-run-config lam-rms lam-episodes)
+
+(define lam-n 19)
+(define lam-truth (make-vector 21 0.0))
+(define (fill-truth! s) (if (<= s 19) (begin (vector-set! lam-truth s (+ -1.0 (/ (* 2.0 s) 20.0))) (fill-truth! (+ s 1))) lam-truth))
+(fill-truth! 1)
+
+; episode buffer: states, per-episode offset / length / final reward
+(define buf (make-vector 400000 0))
+(define ep-off (make-vector 1000 0))
+(define ep-len (make-vector 1000 0))
+(define ep-r (make-vector 1000 0.0))
+(define lam-meta (make-vector 1 0))   ; number of buffered episodes
+(define (lam-episodes) (vector-ref lam-meta 0))
+
+(define (gen! s pos)
+  (vector-set! buf pos s)
+  (let ((s2 (if (= (rng-int! 2) 0) (- s 1) (+ s 1))))
+    (cond ((= s2 0) (cons (+ pos 1) -1.0))
+          ((= s2 20) (cons (+ pos 1) 1.0))
+          ((>= (+ pos 2) (vector-length buf)) (cons (+ pos 1) 0.0))
+          (else (gen! s2 (+ pos 1))))))
+(define (gen-eps! k n pos)
+  (if (< k n)
+      (let ((r (gen! 10 pos)))
+        (vector-set! ep-off k pos)
+        (vector-set! ep-len k (- (car r) pos))
+        (vector-set! ep-r k (cdr r))
+        (gen-eps! (+ k 1) n (car r)))
+      n))
+; (lam-gen-run! n) — draw n fresh episodes for one run
+(define (lam-gen-run! n) (vector-set! lam-meta 0 (gen-eps! 0 n 0)) n)
+
+(define (sq v s acc) (if (<= s 19) (let ((e (- (vector-ref v s) (vector-ref lam-truth s)))) (sq v (+ s 1) (+ acc (* e e)))) acc))
+(define (lam-rms v) (sqrt (/ (sq v 1 0.0) 19.0)))
+
+(define (fill! v x s) (if (< s 21) (begin (vector-set! v s x) (fill! v x (+ s 1))) v))
+(define (copy! d src s) (if (< s 21) (begin (vector-set! d s (vector-ref src s)) (copy! d src (+ s 1))) d))
+; z *= lam
+(define (scale! z lam s) (if (<= s 19) (begin (vector-set! z s (* lam (vector-ref z s))) (scale! z lam (+ s 1))) z))
+; v += c z
+(define (axpy! v z c s)
+  (if (<= s 19) (begin (vector-set! v s (+ (vector-ref v s) (* c (vector-ref z s)))) (axpy! v z c (+ s 1))) v))
+
+(define (st k t) (vector-ref buf (+ (vector-ref ep-off k) t)))
+
+; ---- offline lambda-return
+(define snap (make-vector 21 0.0))
+(define gbuf (make-vector 400000 0.0))
+(define (glam! k t lam)   ; fill gbuf[t] for t = T-2 .. 0 (gbuf[T-1] = R set by caller)
+  (if (>= t 0)
+      (begin (vector-set! gbuf t (+ (* (- 1.0 lam) (vector-ref snap (st k (+ t 1))))
+                                    (* lam (vector-ref gbuf (+ t 1)))))
+             (glam! k (- t 1) lam))
+      #t))
+(define (off-upd! v k t T alpha)
+  (if (< t T)
+      (let ((s (st k t)))
+        (vector-set! v s (+ (vector-ref v s) (* alpha (- (vector-ref gbuf t) (vector-ref v s)))))
+        (off-upd! v k (+ t 1) T alpha))
+      v))
+(define (offline-ep! v k lam alpha)
+  (let ((T (vector-ref ep-len k)))
+    (copy! snap v 0)
+    (vector-set! gbuf (- T 1) (vector-ref ep-r k))
+    (glam! k (- T 2) lam)
+    (off-upd! v k 0 T alpha)))
+
+; ---- TD(lambda) and true online TD(lambda)
+(define z (make-vector 21 0.0))
+(define (vnext v k t T) (if (= t (- T 1)) 0.0 (vector-ref v (st k (+ t 1)))))
+(define (rew k t T) (if (= t (- T 1)) (vector-ref ep-r k) 0.0))
+(define (td-steps! v k t T lam alpha)
+  (if (< t T)
+      (let* ((s (st k t)) (d (- (+ (rew k t T) (vnext v k t T)) (vector-ref v s))))
+        (scale! z lam 1)
+        (vector-set! z s (+ 1.0 (vector-ref z s)))
+        (axpy! v z (* alpha d) 1)
+        (td-steps! v k (+ t 1) T lam alpha))
+      v))
+(define (tdl-ep! v k lam alpha) (fill! z 0.0 0) (td-steps! v k 0 (vector-ref ep-len k) lam alpha))
+
+(define (to-steps! v k t T lam alpha vold)
+  (if (< t T)
+      (let* ((s (st k t)) (V (vector-ref v s)) (Vn (vnext v k t T))
+             (d (- (+ (rew k t T) Vn) V))
+             (zs (vector-ref z s)))
+        (scale! z lam 1)
+        (vector-set! z s (+ (vector-ref z s) (- 1.0 (* alpha lam zs))))
+        (axpy! v z (* alpha (- (+ d V) vold)) 1)
+        (vector-set! v s (- (vector-ref v s) (* alpha (- V vold))))
+        (to-steps! v k (+ t 1) T lam alpha Vn))
+      v))
+(define (tol-ep! v k lam alpha) (fill! z 0.0 0) (to-steps! v k 0 (vector-ref ep-len k) lam alpha 0.0))
+
+(define (episode! method v k lam alpha)
+  (cond ((= method 0) (offline-ep! v k lam alpha))
+        ((= method 1) (tdl-ep! v k lam alpha))
+        (else (tol-ep! v k lam alpha))))
+
+; capped RMS (a diverging run counts as 1.0; NaN compares false and also caps)
+(define (capped e) (if (< e 1.0) e 1.0))
+(define (eps-loop method v lam alpha k n acc)
+  (if (< k n)
+      (begin (episode! method v k lam alpha)
+             (eps-loop method v lam alpha (+ k 1) n (+ acc (capped (lam-rms v)))))
+      acc))
+; (lam-run-config method lam alpha) → sum over the buffered episodes of the RMS
+; error after each episode, starting from v = 0. method 0 offline lambda-return,
+; 1 TD(lambda), 2 true online TD(lambda).
+(define (lam-run-config method lam alpha)
+  (eps-loop method (make-vector 21 0.0) (* 1.0 lam) (* 1.0 alpha) 0 (lam-episodes) 0.0))

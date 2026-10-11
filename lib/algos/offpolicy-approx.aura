@@ -1,0 +1,108 @@
+; algos/offpolicy-approx.aura — Chapter 11: off-policy prediction with linear
+; function approximation on Baird's counterexample.
+;
+;   semi-gradient off-policy TD(0)  (Sec 11.1, Fig 11.2 left)
+;     w += alpha rho delta x(S)
+;   semi-gradient DP                (Fig 11.2 right; expected update, uniform over S)
+;     w += alpha/7 sum_s (E_pi[R + gamma v(S')] - v(s)) x(s)
+;   TDC / GTD(0)                     (Sec 11.7, Fig 11.6)
+;     w += alpha rho (delta x - gamma x' (x . v));  v += beta rho (delta - v . x) x
+;   emphatic TD(0)                   (Sec 11.8, Fig 11.7; expected, interest 1)
+;     M = gamma rho_{t-1} M + 1;  w += alpha M rho delta x
+;
+; Error measures, with mu uniform over the 7 states (the behaviour policy's
+; stationary distribution):
+;   sqrt(VE)  = sqrt(mean_s v(s)^2)          (all true values are 0)
+;   sqrt(PBE) = sqrt(mean_s delta_bar(s)^2)  delta_bar(s) = gamma v(lower) - v(s)
+; The 7 x 8 feature matrix has rank 7, so its column space is all of R^7, the
+; projection is the identity, and PBE = BE here.
+;
+; Expected updates use the fact that only the solid action has rho != 0: averaging
+; over b gives b(solid) * rho(solid) = 1 times the update along the solid action,
+; whose next state is always the lower state. Updates within one sweep are
+; computed from the weights at the start of the sweep (synchronous).
+
+(require "rl/rng" all:)
+(require "envs/baird" all:)
+
+(export bd-ve bd-pbe bd-delta bd-td-step! bd-dp-sweep! bd-tdc-step! bd-tdc-sweep!
+        bd-etd-sweep! bd-run-td bd-run-tdc)
+
+(define (bd-delta w s) (- (* bd-gamma (bd-v w bd-lower)) (bd-v w s)))
+
+(define (sq-v w s acc) (if (< s 7) (sq-v w (+ s 1) (+ acc (* (bd-v w s) (bd-v w s)))) acc))
+(define (bd-ve w) (sqrt (/ (sq-v w 0 0.0) 7.0)))
+(define (sq-d w s acc) (if (< s 7) (sq-d w (+ s 1) (+ acc (* (bd-delta w s) (bd-delta w s)))) acc))
+(define (bd-pbe w) (sqrt (/ (sq-d w 0 0.0) 7.0)))
+
+(define (copy8! dst src i) (if (< i 8) (begin (vector-set! dst i (vector-ref src i)) (copy8! dst src (+ i 1))) dst))
+
+; ---- sample-based semi-gradient off-policy TD(0); state lives in st[0]
+(define (bd-td-step! w st alpha)
+  (let* ((s (vector-ref st 0)) (a (bd-step!)) (s2 (bd-next a)) (rho (bd-rho a)))
+    (if (> rho 0.0)
+        (bd-add! w s (* alpha rho (- (* bd-gamma (bd-v w s2)) (bd-v w s))))
+        #f)
+    (vector-set! st 0 s2)
+    s2))
+
+; ---- semi-gradient DP: one synchronous expected sweep
+(define dp-old (make-vector 8 0.0))
+(define (dp-acc! w s alpha)
+  (if (< s 7)
+      (begin (bd-add! w s (/ (* alpha (bd-delta dp-old s)) 7.0)) (dp-acc! w (+ s 1) alpha))
+      w))
+(define (bd-dp-sweep! w alpha) (copy8! dp-old w 0) (dp-acc! w 0 alpha))
+
+; ---- TDC (sample): v is the secondary weight vector
+(define (v-dot v s) (bd-v v s))
+(define (bd-tdc-step! w v st alpha beta)
+  (let* ((s (vector-ref st 0)) (a (bd-step!)) (s2 (bd-next a)) (rho (bd-rho a)))
+    (if (> rho 0.0)
+        (let* ((d (- (* bd-gamma (bd-v w s2)) (bd-v w s)))
+               (xv (v-dot v s)))
+          (bd-add! w s (* alpha rho d))
+          (bd-add! w s2 (- 0.0 (* alpha rho bd-gamma xv)))
+          (bd-add! v s (* beta rho (- d xv))))
+        #f)
+    (vector-set! st 0 s2)
+    s2))
+
+; ---- TDC (expected sweep)
+(define tdc-w (make-vector 8 0.0))
+(define tdc-v (make-vector 8 0.0))
+(define (tdc-acc! w v s alpha beta)
+  (if (< s 7)
+      (let* ((d (bd-delta tdc-w s)) (xv (v-dot tdc-v s)))
+        (bd-add! w s (/ (* alpha d) 7.0))
+        (bd-add! w bd-lower (/ (* -1.0 alpha bd-gamma xv) 7.0))
+        (bd-add! v s (/ (* beta (- d xv)) 7.0))
+        (tdc-acc! w v (+ s 1) alpha beta))
+      w))
+(define (bd-tdc-sweep! w v alpha beta)
+  (copy8! tdc-w w 0) (copy8! tdc-v v 0) (tdc-acc! w v 0 alpha beta))
+
+; ---- emphatic TD (expected sweep); em = #(M); returns the new expected M.
+; The emphasis on arriving in s uses rho of the previous step, which is 7 when s
+; is the lower state (reached by solid) and 0 for an upper state (dashed).
+(define etd-w (make-vector 8 0.0))
+(define (etd-acc! w s alpha M accM)
+  (if (< s 7)
+      (let ((m (+ 1.0 (* bd-gamma (if (= s bd-lower) 7.0 0.0) M))))
+        (bd-add! w s (/ (* alpha m (bd-delta etd-w s)) 7.0))
+        (etd-acc! w (+ s 1) alpha M (+ accM m)))
+      (/ accM 7.0)))
+(define (bd-etd-sweep! w em alpha)
+  (copy8! etd-w w 0)
+  (vector-set! em 0 (etd-acc! w 0 alpha (vector-ref em 0) 0.0))
+  w)
+
+; run k sample steps of TD / TDC, recording sqrt(VE) every `every` steps into out
+(define (bd-run-td w st alpha k every out i)
+  (if (< i k)
+      (begin (bd-td-step! w st alpha)
+             (if (= 0 (modulo (+ i 1) every)) (vector-set! out (quotient i every) (bd-ve w)) #f)
+             (bd-run-td w st alpha k every out (+ i 1)))
+      out))
+(define (bd-run-tdc w v st alpha beta k i)
+  (if (< i k) (begin (bd-tdc-step! w v st alpha beta) (bd-run-tdc w v st alpha beta k (+ i 1))) w))
