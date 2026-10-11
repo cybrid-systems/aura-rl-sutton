@@ -1,0 +1,45 @@
+; Chapter 4 — Jack's car rental (Example 4.2, Figure 4.2): policy iteration.
+; Full Poisson model (requests 3 / 4, returns 3 / 2), γ = 0.9, synchronous
+; evaluation to θ = RL_THETA (default 1e-4). Prints π0 … π4 and v_π4 as in
+; Figure 4.2. About 2 min on a RelWithDebInfo build.
+
+(require "envs/car-rental" all:)
+(require "rl/vec" all:)
+(require "rl/knobs" all:)
+
+(define theta (env-float "RL_THETA" 0.0001))
+(define p (cr-new 0.9))
+
+(display "Example 4.2 Jack's car rental: policy iteration, theta=") (display (number->string theta)) (newline)
+(display "Policies: rows = cars at location 1 (20 at the top), columns = cars at location 2 (0..20),") (newline)
+(display "entries = cars moved from location 1 to 2 (negative: 2 to 1)") (newline)
+
+(define (on-round r before sweeps changed)
+  (if (> r 0)
+      (begin (display "pi") (display r) (newline) (cr-print-policy before))
+      #f)
+  (display "round ") (display r) (display ": evaluation sweeps=") (display sweeps)
+  (display ", states whose action changed=") (display changed) (newline))
+
+(define last (cr-policy-iteration! p theta on-round))
+(display "policy stable after ") (display last) (display " improvements; pi") (display last)
+(display " is optimal") (newline)
+
+(define (v i j) (vector-ref (cr-V p) (+ (* i cr-n) j)))
+(define (show-v-row i)
+  (if (>= i 0)
+      (begin
+        (display (string-pad-left (number->string i) 3)) (display " |")
+        (show-v-cells i 0)
+        (newline)
+        (show-v-row (- i 5)))
+      #f))
+(define (show-v-cells i j)
+  (if (<= j 20)
+      (begin (display (fmt (v i j) 1)) (show-v-cells i (+ j 5)))
+      #f))
+(display "v_pi") (display last) (display " (every 5th state; columns location 2 = 0,5,10,15,20)") (newline)
+(show-v-row 20)
+(define (vmin v i m) (if (< i (vector-length v)) (vmin v (+ i 1) (min m (vector-ref v i))) m))
+(display "min v=") (display (fmt (vmin (cr-V p) 1 (vector-ref (cr-V p) 0)) 1)) (display " max v=") (display (fmt (vec-max (cr-V p)) 1)) (newline)
+(display "done") (newline)

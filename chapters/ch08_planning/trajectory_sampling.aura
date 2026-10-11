@@ -1,0 +1,52 @@
+; Chapter 8 — Figure 8.8: trajectory sampling vs uniform expected updates.
+; Random tasks with RL_STATES states (default 1000), 2 actions, branching
+; b ∈ {1, 3, 10} (RL_BRANCHES picks how many of them: default 2 → b = 1, 3),
+; termination probability 0.1. Value of the start state under the greedy policy
+; after every RL_EVERY expected updates (default 500) up to RL_UPDATES (default
+; 6000, three uniform sweeps; the book plots 20000), mean over RL_TASKS tasks
+; (default 2; the book uses 200). About 6 min on a RelWithDebInfo build.
+
+(require "rl/rng" all:)
+(require "rl/vec" all:)
+(require "rl/knobs" all:)
+(require "algos/sample-updates" all:)
+
+(define n (env-int "RL_STATES" 1000))
+(define nb (env-int "RL_BRANCHES" 2))
+(define updates (env-int "RL_UPDATES" 6000))
+(define every (env-int "RL_EVERY" 500))
+(define tasks (env-int "RL_TASKS" 2))
+(define seed (env-int "RL_SEED" 2026))
+
+(define (mean-curve b method k acc)
+  (if (< k tasks)
+      (begin
+        (rng-seed! (+ seed (* 1000 b) k))
+        (let* ((task (ts-task n b))
+               (out (ts-run! task method updates every)))
+          (mean-curve b method (+ k 1) (if acc (vec-add! acc out) out))))
+      (vec-scale! acc (/ 1.0 tasks))))
+(define (vec-add! a b) (vec-add-from! a b 0))
+(define (vec-add-from! a b i)
+  (if (< i (vector-length a)) (begin (vec-add-at! a i (vector-ref b i)) (vec-add-from! a b (+ i 1))) a))
+
+(define (show-x i)
+  (if (<= (* i every) updates)
+      (begin (display (string-pad-left (number->string (* i every)) 7)) (show-x (+ i 1)))
+      #f))
+(display "Figure 8.8: value of the start state, ") (display n) (display " states, tasks=")
+(display tasks) (newline)
+(display "      updates") (show-x 0) (newline)
+(define (show b method label)
+  (let ((c (mean-curve b method 0 #f)))
+    (display (string-pad-right (string-append "b=" (number->string b) " " label) 13))
+    (display (vec->string c 2))
+    (newline)))
+(define (branches bs k)
+  (if (and (not (null? bs)) (< k nb))
+      (begin (show (car bs) 'on-policy "on-policy")
+             (show (car bs) 'uniform "uniform")
+             (branches (cdr bs) (+ k 1)))
+      #f))
+(branches (cons 1 (cons 3 (cons 10 '()))) 0)
+(display "done") (newline)

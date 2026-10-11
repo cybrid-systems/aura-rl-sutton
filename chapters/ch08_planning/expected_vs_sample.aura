@@ -1,0 +1,35 @@
+; Chapter 8 — Figure 8.7: expected vs sample updates.
+; For branching factors b = 2, 10, 100, 1000: the RMS error of the sample-average
+; estimate after t one-successor computations (t in units of b), averaged over
+; RL_RUNS runs (default 100, as in the book), next to √((b−1)/(b t)). An expected
+; update costs b computations and has error 0 afterwards (its error before
+; finishing is that of the initial estimate).
+
+(require "rl/rng" all:)
+(require "rl/vec" all:)
+(require "rl/knobs" all:)
+(require "algos/sample-updates" all:)
+
+(define runs (env-int "RL_RUNS" 100))
+(rng-seed! (env-int "RL_SEED" 2026))
+
+(display "Figure 8.7: RMS error of sample updates, runs=") (display runs) (newline)
+(display "     b   t=b/10       t=b/2        t=b          t=2b       (measured / sqrt((b-1)/(bt)))") (newline)
+(define (theory b t) (sqrt (/ (- b 1.0) (* b t))))
+(define (cell b t r)
+  (display (fmt r 3)) (display " /") (display (string-pad-left (number->string (round-to (theory b t) 3)) 6)))
+(define (row b)
+  (let* ((t1 (max 1 (quotient b 10)))
+         (t2 (max 1 (quotient b 2)))
+         (ts (if (= t1 t2) (cons t2 (cons b (cons (* 2 b) '()))) (cons t1 (cons t2 (cons b (cons (* 2 b) '()))))))
+         (r (es-rms! b runs ts))
+         (off (if (= t1 t2) 1 0)))
+    (display (string-pad-left (number->string b) 6))
+    (cell b t1 (vector-ref r 0))
+    (cell b t2 (vector-ref r (- 1 off)))
+    (cell b b (vector-ref r (- 2 off)))
+    (cell b (* 2 b) (vector-ref r (- 3 off)))
+    (newline)))
+(row 2) (row 10) (row 100) (row 1000)
+(display "expected update: error of the initial estimate until t=b, then 0") (newline)
+(display "done") (newline)

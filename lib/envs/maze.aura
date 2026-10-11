@@ -10,7 +10,7 @@
 
 (require "rl/tuple" all:)
 
-(export maze-rows maze-cols maze-start maze-goal maze-nS maze-wall? maze-step maze-switch!
+(export maze-rows maze-cols maze-start maze-goal maze-goal? maze-nS maze-wall? maze-step maze-switch! maze-scale
         dyna-maze blocking-maze shortcut-maze maze->string)
 
 (define (maze-rows m) (vector-ref m 0))
@@ -21,7 +21,7 @@
 (define (maze-wall? m s) (vector-ref (vector-ref m 4) s))
 
 (define (maze-new rows cols start goal)
-  (let ((m (make-vector 6 #f)))
+  (let ((m (make-vector 7 #f)))
     (vector-set! m 0 rows)
     (vector-set! m 1 cols)
     (vector-set! m 2 start)
@@ -48,7 +48,39 @@
          (c2 (if (= a 2) (max (- c 1) 0) (if (= a 3) (min (+ c 1) (- cols 1)) c)))
          (s2 (+ (* r2 cols) c2))
          (s3 (if (maze-wall? m s2) s s2)))
-    (if (= s3 (maze-goal m)) (tup3 s3 1.0 #t) (tup3 s3 0.0 #f))))
+    (if (maze-goal? m s3) (tup3 s3 1.0 #t) (tup3 s3 0.0 #f))))
+
+;
+; Goal test: one goal cell, or the goal block of a scaled maze (slot 6).
+(define (maze-goal? m s)
+  (let ((gs (vector-ref m 6)))
+    (if gs (vector-ref gs s) (= s (maze-goal m)))))
+
+; Example 8.4: the maze at k times the resolution. Every cell becomes a k×k block
+; (walls and the goal block included); the start is the top-left cell of its block.
+; The shortest path grows from 14 to 14k steps. Changing mazes keep only the
+; current layout.
+(define (maze-scale m k)
+  (let* ((cols (maze-cols m))
+         (rows2 (* k (maze-rows m)))
+         (cols2 (* k cols))
+         (sr (quotient (maze-start m) cols))
+         (sc (modulo (maze-start m) cols))
+         (gr (quotient (maze-goal m) cols))
+         (gc (modulo (maze-goal m) cols))
+         (m2 (maze-new rows2 cols2 (+ (* k sr cols2) (* k sc)) (+ (* k gr cols2) (* k gc))))
+         (gs (make-vector (* rows2 cols2) #f)))
+    (maze-scale-cells! m m2 gs k 0)
+    (vector-set! m2 6 gs)
+    m2))
+(define (maze-scale-cells! m m2 gs k s2)
+  (if (< s2 (maze-nS m2))
+      (let* ((cols2 (maze-cols m2))
+             (s (+ (* (quotient (quotient s2 cols2) k) (maze-cols m)) (quotient (modulo s2 cols2) k))))
+        (if (maze-wall? m s) (vector-set! (vector-ref m2 4) s2 #t) #f)
+        (if (= s (maze-goal m)) (vector-set! gs s2 #t) #f)
+        (maze-scale-cells! m m2 gs k (+ s2 1)))
+      m2))
 
 ; Install the second wall layout (no-op for a maze that does not change).
 (define (maze-switch! m)
@@ -85,6 +117,6 @@
         (lp (+ s 1)
             (string-append acc
                            (if (= s (maze-start m)) "S"
-                               (if (= s (maze-goal m)) "G"
+                               (if (maze-goal? m s) "G"
                                    (if (maze-wall? m s) "#" ".")))
                            (if (= (modulo (+ s 1) (maze-cols m)) 0) "\n" ""))))))

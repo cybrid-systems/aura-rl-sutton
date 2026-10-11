@@ -1,0 +1,196 @@
+; algos/prioritized.aura — prioritized sweeping for deterministic environments
+; (Sutton & Barto, Sec 8.4, boxed algorithm) and the Example 8.4 measurement.
+;
+; Per real step: ε-greedy action, Model(S,A) ← (R, S'), P = |R + γ max Q(S') − Q(S,A)|,
+; insert (S,A) if P > θ; then up to n planning updates, each popping the pair with
+; the highest priority, updating it, and inserting every predicted predecessor
+; (S̄,Ā) of S whose priority exceeds θ. There is no direct update from the real
+; transition: every Q change comes from the queue, as in the box.
+;
+; Priority queue: a binary max-heap with lazy deletion. cur[sa] is the priority
+; (S,A) holds in the queue (0 = not queued); an insert with a lower priority than
+; the one queued is dropped (only the higher entry is retained), a higher one is
+; pushed and makes the old heap entry stale; pop skips stale entries.
+; Loops are top-level recursion (named let entries are never reclaimed, aura#4459).
+
+(require "rl/rng" all:)
+(require "rl/vec" all:)
+(require "rl/tuple" all:)
+(require "algos/td" all:)
+(require "algos/dyna" all:)
+(require "envs/maze" all:)
+
+(export pq-new pq-insert! pq-pop! pq-empty? pq-size ps-new ps-episode! ps-updates
+        maze-greedy-ok? ps-updates-to-solve dyna-updates-to-solve)
+
+; ---- heap: #(prio-vec sa-vec size cur-vec)
+(define (pq-new nsa)
+  (let ((h (make-vector 4 0)))
+    (vector-set! h 0 (make-vector 64 0.0))
+    (vector-set! h 1 (make-vector 64 0))
+    (vector-set! h 2 0)
+    (vector-set! h 3 (make-vector nsa 0.0))
+    h))
+(define (pq-size h) (vector-ref h 2))
+(define (pq-empty? h) (= (vector-ref h 2) 0))
+
+(define (pq-grow! h)
+  (let* ((n (vector-length (vector-ref h 0)))
+         (p2 (make-vector (* 2 n) 0.0))
+         (s2 (make-vector (* 2 n) 0)))
+    (pq-copy! (vector-ref h 0) p2 (vector-ref h 1) s2 0 n)
+    (vector-set! h 0 p2)
+    (vector-set! h 1 s2)))
+(define (pq-copy! p p2 s s2 i n)
+  (if (< i n)
+      (begin (vector-set! p2 i (vector-ref p i)) (vector-set! s2 i (vector-ref s i))
+             (pq-copy! p p2 s s2 (+ i 1) n))
+      #f))
+
+(define (pq-swap! h i j)
+  (let ((P (vector-ref h 0)) (S (vector-ref h 1)))
+    (let ((tp (vector-ref P i)) (ts (vector-ref S i)))
+      (vector-set! P i (vector-ref P j))
+      (vector-set! S i (vector-ref S j))
+      (vector-set! P j tp)
+      (vector-set! S j ts))))
+(define (pq-up! h i)
+  (if (> i 0)
+      (let ((par (quotient (- i 1) 2)))
+        (if (> (vector-ref (vector-ref h 0) i) (vector-ref (vector-ref h 0) par))
+            (begin (pq-swap! h i par) (pq-up! h par))
+            #f))
+      #f))
+(define (pq-down! h i)
+  (let* ((n (vector-ref h 2))
+         (P (vector-ref h 0))
+         (l (+ (* 2 i) 1))
+         (r (+ l 1))
+         (m1 (if (and (< l n) (> (vector-ref P l) (vector-ref P i))) l i))
+         (m (if (and (< r n) (> (vector-ref P r) (vector-ref P m1))) r m1)))
+    (if (= m i) #f (begin (pq-swap! h i m) (pq-down! h m)))))
+
+(define (pq-insert! h sa p)
+  (if (> p (vector-ref (vector-ref h 3) sa))
+      (begin
+        (if (= (vector-ref h 2) (vector-length (vector-ref h 0))) (pq-grow! h) #f)
+        (let ((n (vector-ref h 2)))
+          (vector-set! (vector-ref h 0) n p)
+          (vector-set! (vector-ref h 1) n sa)
+          (vector-set! h 2 (+ n 1))
+          (vector-set! (vector-ref h 3) sa p)
+          (pq-up! h n)))
+      #f))
+
+; → sa of the highest live priority, or -1 when empty (stale entries skipped)
+(define (pq-pop! h)
+  (if (= (vector-ref h 2) 0)
+      -1
+      (let ((p (vector-ref (vector-ref h 0) 0))
+            (sa (vector-ref (vector-ref h 1) 0))
+            (n (- (vector-ref h 2) 1)))
+        (pq-swap! h 0 n)
+        (vector-set! h 2 n)
+        (pq-down! h 0)
+        (if (= p (vector-ref (vector-ref h 3) sa))
+            (begin (vector-set! (vector-ref h 3) sa 0.0) sa)
+            (pq-pop! h)))))
+
+; ---- agent: #(q nA next rew known preds heap updates)
+(define (ps-new nS nA)
+  (let ((a (make-vector 8 0)))
+    (vector-set! a 0 (make-vector (* nS nA) 0.0))
+    (vector-set! a 1 nA)
+    (vector-set! a 2 (make-vector (* nS nA) 0))
+    (vector-set! a 3 (make-vector (* nS nA) 0.0))
+    (vector-set! a 4 (make-vector (* nS nA) #f))
+    (vector-set! a 5 (make-vector nS '()))
+    (vector-set! a 6 (pq-new (* nS nA)))
+    (vector-set! a 7 0)
+    a))
+(define (ps-q a) (vector-ref a 0))
+(define (ps-updates a) (vector-ref a 7))
+
+(define (ps-priority a sa s2 r gamma)
+  (abs (- (+ r (* gamma (q-max (ps-q a) (vector-ref a 1) s2))) (vector-ref (ps-q a) sa))))
+
+; predecessors of s: insert those above theta
+(define (ps-preds! a preds s gamma theta)
+  (if (null? preds)
+      #f
+      (let ((sb (car preds)))
+        (let ((p (ps-priority a sb s (vector-ref (vector-ref a 3) sb) gamma)))
+          (if (> p theta) (pq-insert! (vector-ref a 6) sb p) #f))
+        (ps-preds! a (cdr preds) s gamma theta))))
+
+(define (ps-plan! a k n alpha gamma theta)
+  (if (and (< k n) (not (pq-empty? (vector-ref a 6))))
+      (let ((sa (pq-pop! (vector-ref a 6))))
+        (if (>= sa 0)
+            (let* ((nA (vector-ref a 1))
+                   (s (quotient sa nA))
+                   (s2 (vector-ref (vector-ref a 2) sa))
+                   (r (vector-ref (vector-ref a 3) sa))
+                   (q (ps-q a))
+                   (qsa (vector-ref q sa)))
+              (vector-set! q sa (+ qsa (* alpha (- (+ r (* gamma (q-max q nA s2))) qsa))))
+              (vector-set! a 7 (+ 1 (vector-ref a 7)))
+              (ps-preds! a (vector-ref (vector-ref a 5) s) s gamma theta)
+              (ps-plan! a (+ k 1) n alpha gamma theta))
+            #f))
+      #f))
+
+; One episode on maze mz from its start. → real steps
+(define (ps-episode! a mz n eps alpha gamma theta)
+  (ps-ep-from a mz (maze-start mz) 0 n eps alpha gamma theta))
+(define (ps-ep-from a mz s steps n eps alpha gamma theta)
+  (let* ((nA (vector-ref a 1))
+         (act (q-eps-greedy! (ps-q a) nA s eps))
+         (res (maze-step mz s act))
+         (s2 (car res))
+         (r (cadr res))
+         (sa (+ (* s nA) act)))
+    (if (vector-ref (vector-ref a 4) sa)
+        #f
+        (begin (vector-set! (vector-ref a 4) sa #t)
+               (vector-set! (vector-ref a 5) s2 (cons sa (vector-ref (vector-ref a 5) s2)))))
+    (vector-set! (vector-ref a 2) sa s2)
+    (vector-set! (vector-ref a 3) sa r)
+    (let ((p (ps-priority a sa s2 r gamma)))
+      (if (> p theta) (pq-insert! (vector-ref a 6) sa p) #f))
+    (ps-plan! a 0 n alpha gamma theta)
+    (if (car (cddr res))
+        (+ steps 1)
+        (ps-ep-from a mz s2 (+ steps 1) n eps alpha gamma theta))))
+
+; Greedy path (first maximal action) from the start reaches the goal within limit steps?
+(define (maze-greedy-ok? q mz limit)
+  (maze-greedy-from q mz (maze-start mz) 0 limit))
+(define (maze-greedy-from q mz s k limit)
+  (if (> k limit)
+      #f
+      (let ((res (maze-step mz s (q-argmax q 4 s))))
+        (if (car (cddr res)) #t (maze-greedy-from q mz (car res) (+ k 1) limit)))))
+
+; Example 8.4 measure: Q updates until the greedy path is within 1.2 × 14k steps
+; (k = resolution), checked after every episode; gives up after max-ep episodes.
+(define (ps-updates-to-solve mz k n eps alpha gamma theta max-ep)
+  (let ((a (ps-new (maze-nS mz) 4)))
+    (ps-solve-ep a mz (* 1.2 14 k) n eps alpha gamma theta max-ep)))
+(define (ps-solve-ep a mz limit n eps alpha gamma theta left)
+  (ps-episode! a mz n eps alpha gamma theta)
+  (if (or (maze-greedy-ok? (ps-q a) mz limit) (<= left 1))
+      (ps-updates a)
+      (ps-solve-ep a mz limit n eps alpha gamma theta (- left 1))))
+
+; Same measure for Dyna-Q: each real step is one Q-learning update plus n planning updates.
+(define (dyna-updates-to-solve mz k n eps alpha gamma max-ep)
+  (let ((q (make-vector (* (maze-nS mz) 4) 0.0))
+        (m (dm-new (maze-nS mz) 4 #f)))
+    (dm-seed! m (+ 7919 (rng-int! 100000)))
+    (dyna-solve-ep q m mz (* 1.2 14 k) n eps alpha gamma 0 max-ep)))
+(define (dyna-solve-ep q m mz limit n eps alpha gamma updates left)
+  (let ((u (+ updates (* (+ n 1) (dyna-episode! q m mz eps alpha gamma n 0.0)))))
+    (if (or (maze-greedy-ok? q mz limit) (<= left 1))
+        u
+        (dyna-solve-ep q m mz limit n eps alpha gamma u (- left 1)))))

@@ -29,3 +29,18 @@
 (check-range "ucb optimal% (label \"ucb\")" (cadr ucb) 50.0 100.0)
 ; Figure 2.5: gradient + baseline reaches a high optimal-action rate (offset +4 does not matter).
 (check-range "gradient+baseline optimal%" (cadr grad) 50.0 100.0)
+
+; Figure 2.6 shape (6 runs x 600 steps, same testbeds for every point): each
+; method's curve is an inverted U over its parameter.
+(define (pp cfg) (bandit-param-point cfg 6 600 2026))
+(define e128 (pp (bandit-cfg 'eps 0.0078125 0.0 0.0 0.0 #f 0.0 "eps")))
+(define e16 (pp (bandit-cfg 'eps 0.0625 0.0 0.0 0.0 #f 0.0 "eps")))
+(define e4 (pp (bandit-cfg 'eps 0.25 0.0 0.0 0.0 #f 0.0 "eps")))
+(check-true "fig2.6 eps-greedy: eps=1/16 beats eps=1/128 and eps=1/4" (and (> e16 e128) (> e16 e4)))
+(define u1 (pp (bandit-cfg 'ucb 0.0 0.0 0.0 1.0 #f 0.0 "ucb")))
+(define u4 (pp (bandit-cfg 'ucb 0.0 0.0 0.0 4.0 #f 0.0 "ucb")))
+(check-true "fig2.6 UCB: c=1 beats c=4" (> u1 u4))
+(define g32 (pp (bandit-cfg 'gradient 0.0 0.03125 0.0 0.0 #t 0.0 "grad")))
+(define g4 (pp (bandit-cfg 'gradient 0.0 0.25 0.0 0.0 #t 0.0 "grad")))
+(check-true "fig2.6 gradient: alpha=1/4 beats alpha=1/32" (> g4 g32))
+(check-true "fig2.6 UCB c=1 beats eps-greedy at its best (eps=1/16)" (> u1 e16))

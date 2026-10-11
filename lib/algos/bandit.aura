@@ -11,7 +11,7 @@
 (require "rl/rng" all:)
 (require "rl/vec" all:)
 
-(export bandit-cfg cfg-method cfg-label bandit-run! bandit-tail-mean softmax!)
+(export bandit-cfg cfg-method cfg-label bandit-run! bandit-tail-mean softmax! bandit-param-point)
 
 ; cfg = #(method eps alpha init ucb-c baseline? true-offset label)
 (define (bandit-cfg method eps alpha init ucb-c baseline offset label)
@@ -142,3 +142,20 @@
 
 (define (round-int x)
   (inexact->exact (round x)))
+
+; Figure 2.6: mean reward over all `steps` steps, averaged over `runs` runs.
+; Run r is seeded with seed + r, so every configuration meets the same testbeds
+; (common random numbers across the points of a parameter study). Four draws are
+; discarded after seeding: Park–Miller states seeded s and s+1 differ by 16807 / m
+; ≈ 8e-6 in their first uniform, so the first testbed values of consecutive runs
+; would be nearly equal (each draw multiplies the gap by 16807).
+(define (bandit-param-point cfg runs steps seed)
+  (bandit-param-runs cfg runs steps seed 0 0.0))
+(define (bandit-param-runs cfg runs steps seed r acc)
+  (if (< r runs)
+      (begin
+        (rng-seed! (+ seed r))
+        (rng-next!) (rng-next!) (rng-next!) (rng-next!)
+        (bandit-param-runs cfg runs steps seed (+ r 1)
+                           (+ acc (bandit-tail-mean (car (bandit-run! cfg 10 1 steps)) 1.0))))
+      (/ acc runs)))

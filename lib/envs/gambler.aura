@@ -1,0 +1,60 @@
+; envs/gambler.aura — the gambler's problem (Example 4.3) by value iteration.
+;
+; Capital s ∈ 1..99, stake a ∈ 1..min(s, 100-s); heads (probability ph) wins the
+; stake, tails loses it. Reaching 100 pays +1, γ = 1. v(0) = 0 and v(100) = 1 are
+; fixed, so v(s) is the probability of reaching 100 under the greedy policy.
+
+(export gb-new gb-sweep! gb-value-iteration! gb-q gb-policy gb-print-policy)
+
+; v = vector of 101 values, v[100] = 1
+(define (gb-new)
+  (let ((v (make-vector 101 0.0)))
+    (vector-set! v 100 1.0)
+    v))
+
+(define (gb-q v ph s a)
+  (+ (* ph (vector-ref v (+ s a))) (* (- 1.0 ph) (vector-ref v (- s a)))))
+
+(define (gb-max v ph s a top best)
+  (if (<= a top) (gb-max v ph s (+ a 1) top (max best (gb-q v ph s a))) best))
+
+; One in-place sweep over s = 1..99. → max |Δv|
+(define (gb-sweep! v ph)
+  (gb-sweep-from! v ph 1 0.0))
+(define (gb-sweep-from! v ph s delta)
+  (if (< s 100)
+      (let ((new (gb-max v ph s 1 (min s (- 100 s)) 0.0))
+            (old (vector-ref v s)))
+        (vector-set! v s new)
+        (gb-sweep-from! v ph (+ s 1) (max delta (abs (- new old)))))
+      delta))
+
+; Sweep until max |Δv| < theta; (on-sweep k v) after every sweep. → sweeps
+(define (gb-value-iteration! v ph theta on-sweep)
+  (gb-vi-from! v ph theta on-sweep 1))
+(define (gb-vi-from! v ph theta on-sweep k)
+  (let ((d (gb-sweep! v ph)))
+    (on-sweep k v)
+    (if (< d theta) k (gb-vi-from! v ph theta on-sweep (+ k 1)))))
+
+; Greedy stake for s: the smallest stake within tol of the best (Figure 4.3 shows
+; one optimal policy; many stakes tie).
+(define (gb-policy v ph s tol)
+  (let ((top (min s (- 100 s))))
+    (gb-first v ph s 1 top (- (gb-max v ph s 1 top 0.0) tol))))
+(define (gb-first v ph s a top lim)
+  (if (or (> a top) (>= (gb-q v ph s a) lim)) a (gb-first v ph s (+ a 1) top lim)))
+
+; Stakes for s = 1..99, 25 per line.
+(define (gb-print-policy v ph tol)
+  (gb-print-from v ph tol 1))
+(define (gb-print-from v ph tol s)
+  (if (< s 100)
+      (begin
+        (if (= (modulo s 25) 1)
+            (begin (display "  s=") (display (string-pad-left (number->string s) 2)) (display ":"))
+            #f)
+        (display (string-pad-left (number->string (gb-policy v ph s tol)) 3))
+        (if (or (= (modulo s 25) 0) (= s 99)) (newline) #f)
+        (gb-print-from v ph tol (+ s 1)))
+      #f))

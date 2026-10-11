@@ -1,0 +1,58 @@
+; Chapter 2 — Figure 2.6: parameter study of the bandit methods.
+; Average reward over the first RL_STEPS steps (book: 1000) as a function of each
+; method's parameter, on the 10-armed testbed:
+;   ε-greedy (sample averages)       ε  ∈ 1/128 … 1/4
+;   gradient bandit with baseline    α  ∈ 1/32 … 4
+;   UCB                              c  ∈ 1/16 … 4
+;   greedy, optimistic init, α = 0.1 Q1 ∈ 1/4 … 4
+; Run r of every configuration uses the same seed (RL_SEED + r), so every point is
+; measured on the same RL_RUNS testbeds (common random numbers).
+; Powers of two are written as literals: expt with a negative exponent never
+; returns on this Aura tip (cybrid-systems/aura#4458).
+;
+; Knobs: RL_RUNS (default 10; book 2000), RL_STEPS (default 1000), RL_SEED (2026).
+
+(require "rl/rng" all:)
+(require "rl/vec" all:)
+(require "rl/knobs" all:)
+(require "algos/bandit" all:)
+
+(define runs (env-int "RL_RUNS" 10))
+(define steps (env-int "RL_STEPS" 1000))
+(define seed (env-int "RL_SEED" 2026))
+
+(define (param-point cfg) (bandit-param-point cfg runs steps seed))
+
+(define (sweep label make xs names)
+  (display (string-pad-right label 30))
+  (sweep-row make xs names -1.0e9 "")
+  #t)
+(define (sweep-row make xs names best best-name)
+  (if (null? xs)
+      (begin (display "  best=") (display best-name) (newline))
+      (let ((v (param-point (make (car xs)))))
+        (display " ") (display (car names)) (display ":") (display (fmt v 3))
+        (if (> v best)
+            (sweep-row make (cdr xs) (cdr names) v (car names))
+            (sweep-row make (cdr xs) (cdr names) best best-name)))))
+
+(display "Figure 2.6 parameter study: runs=") (display runs)
+(display " steps=") (display steps) (display " (average reward over all steps)") (newline)
+
+(sweep "eps-greedy (eps)"
+       (lambda (x) (bandit-cfg (quote eps) x 0.0 0.0 0.0 #f 0.0 "eps"))
+       (cons 0.0078125 (cons 0.015625 (cons 0.03125 (cons 0.0625 (cons 0.125 (cons 0.25 (quote ())))))))
+       (cons "1/128" (cons "1/64" (cons "1/32" (cons "1/16" (cons "1/8" (cons "1/4" (quote ()))))))))
+(sweep "gradient+baseline (alpha)"
+       (lambda (x) (bandit-cfg (quote gradient) 0.0 x 0.0 0.0 #t 0.0 "grad"))
+       (cons 0.03125 (cons 0.0625 (cons 0.125 (cons 0.25 (cons 0.5 (cons 1.0 (cons 2.0 (cons 4.0 (quote ())))))))))
+       (cons "1/32" (cons "1/16" (cons "1/8" (cons "1/4" (cons "1/2" (cons "1" (cons "2" (cons "4" (quote ()))))))))))
+(sweep "UCB (c)"
+       (lambda (x) (bandit-cfg (quote ucb) 0.0 0.0 0.0 x #f 0.0 "ucb"))
+       (cons 0.0625 (cons 0.125 (cons 0.25 (cons 0.5 (cons 1.0 (cons 2.0 (cons 4.0 (quote ()))))))))
+       (cons "1/16" (cons "1/8" (cons "1/4" (cons "1/2" (cons "1" (cons "2" (cons "4" (quote ())))))))))
+(sweep "optimistic greedy a=0.1 (Q1)"
+       (lambda (x) (bandit-cfg (quote eps) 0.0 0.1 x 0.0 #f 0.0 "opt"))
+       (cons 0.25 (cons 0.5 (cons 1.0 (cons 2.0 (cons 4.0 (quote ()))))))
+       (cons "1/4" (cons "1/2" (cons "1" (cons "2" (cons "4" (quote ())))))))
+(display "done") (newline)

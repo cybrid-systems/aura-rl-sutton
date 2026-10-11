@@ -1,0 +1,57 @@
+; Chapter 8 oracle, part 2: scaled mazes, the priority queue, prioritized sweeping
+; vs Dyna-Q (Example 8.4), expected vs sample updates (Figure 8.7) and trajectory
+; sampling (Figure 8.8).
+(require "rl/check" all:)
+(require "rl/rng" all:)
+(require "rl/vec" all:)
+(require "envs/maze" all:)
+(require "algos/prioritized" all:)
+(require "algos/sample-updates" all:)
+
+; --- maze-scale
+(define m2 (maze-scale (dyna-maze) 2))
+(check-true "scaled maze: 12x18, start (4,0)" (and (= (maze-rows m2) 12) (= (maze-cols m2) 18) (= (maze-start m2) 72)))
+(check-true "scaled maze: goal block (0..1, 16..17)"
+            (and (maze-goal? m2 16) (maze-goal? m2 17) (maze-goal? m2 34) (maze-goal? m2 35)
+                 (not (maze-goal? m2 15)) (not (maze-goal? m2 52))))
+(check-true "scaled maze: wall (1,2) becomes the block (2..3, 4..5)"
+            (and (maze-wall? m2 40) (maze-wall? m2 41) (maze-wall? m2 58) (maze-wall? m2 59) (not (maze-wall? m2 39))))
+(define st (maze-step m2 33 3))
+(check-true "scaled maze: stepping into the goal block pays 1 and ends" (and (= (car st) 34) (= (cadr st) 1.0) (car (cddr st))))
+(check-true "dyna maze (unscaled) still has a single goal" (and (maze-goal? (dyna-maze) 8) (not (maze-goal? (dyna-maze) 17))))
+
+; --- priority queue: max first, lower re-insert dropped, higher re-insert wins
+(define h (pq-new 10))
+(pq-insert! h 3 0.5) (pq-insert! h 7 0.9) (pq-insert! h 2 0.1) (pq-insert! h 3 0.95) (pq-insert! h 7 0.2)
+(define p1 (pq-pop! h)) (define p2 (pq-pop! h)) (define p3 (pq-pop! h)) (define p4 (pq-pop! h))
+(check-true "pq: pops 3 (0.95), 7 (0.9), 2, then empty (stale 3@0.5 skipped)"
+            (and (= p1 3) (= p2 7) (= p3 2) (= p4 -1) (pq-empty? h)))
+(define h2 (pq-new 300))
+(define (fill-h i) (if (< i 200) (begin (pq-insert! h2 i (* 1.0 (modulo (* i 37) 200))) (fill-h (+ i 1))) #f))
+(fill-h 1)
+(define (drain prev ok) (let ((sa (pq-pop! h2))) (if (< sa 0) ok (let ((p (* 1.0 (modulo (* sa 37) 200)))) (drain p (and ok (<= p prev)))))))
+(check-true "pq: 199 inserts (heap grows past 64) drain in descending priority" (drain 1.0e9 #t))
+
+; --- Example 8.4 at resolution 1 (one seeded run each)
+(rng-seed! 2026)
+(define ups (ps-updates-to-solve (dyna-maze) 1 5 0.1 0.5 0.95 0.0001 500))
+(rng-seed! 2026)
+(define udq (dyna-updates-to-solve (dyna-maze) 1 5 0.1 0.5 0.95 500))
+(check-true "example 8.4: prioritized sweeping needs fewer updates than Dyna-Q" (< (* 2 ups) udq))
+(check-range "example 8.4: prioritized sweeping updates at resolution 1" ups 100 5000)
+
+; --- Figure 8.7: RMS error of the sample average, b = 10
+(rng-seed! 7)
+(define es (es-rms! 10 400 (cons 1 (cons 10 (cons 20 '())))))
+(check-near "fig8.7 b=10, t=1: sqrt(9/10)" (vector-ref es 0) 0.949 0.08)
+(check-near "fig8.7 b=10, t=b: sqrt(9/100)" (vector-ref es 1) 0.3 0.04)
+(check-near "fig8.7 b=10, t=2b: sqrt(9/200)" (vector-ref es 2) 0.212 0.03)
+
+; --- Figure 8.8: small task (200 states, b = 3)
+(rng-seed! 11)
+(define task (ts-task 200 3))
+(define cu (ts-run! task 'uniform 2000 1000))
+(define co (ts-run! task 'on-policy 2000 1000))
+(check-true "fig8.8 both start from the same greedy value with Q = 0" (= (vector-ref cu 0) (vector-ref co 0)))
+(check-true "fig8.8 uniform: five sweeps improve the start value" (> (vector-ref cu 2) (vector-ref cu 0)))
+(check-true "fig8.8 on-policy: 2000 updates improve the start value" (> (vector-ref co 2) (vector-ref co 0)))

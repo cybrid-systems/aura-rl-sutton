@@ -1,0 +1,49 @@
+; Chapter 4 oracle: Jack's car rental (Example 4.2) and the gambler's problem
+; (Example 4.3). Numbers from tests/oracle/car_rental.py and tests/oracle/gambler.py.
+(require "rl/check" all:)
+(require "rl/vec" all:)
+(require "envs/car-rental" all:)
+(require "envs/gambler" all:)
+
+; --- car rental model
+(define pr (cr-pois 3.0 25))
+(check-near "poisson(3) pmf sums to 1 (cut at 25)" (vec-sum pr) 1.0 1.0e-9)
+(define p (cr-new 0.9))
+(define (row-sum T n j acc) (if (< j 21) (row-sum T n (+ j 1) (+ acc (vector-ref T (+ (* n 21) j)))) acc))
+(check-near "location 1: transition row n=10 sums to 1" (row-sum (cr-T1 p) 10 0 0.0) 1.0 1.0e-9)
+(check-near "location 1: expected rent with 0 cars" (vector-ref (cr-R1 p) 0) 0.0 1.0e-12)
+(check-near "location 1: expected rent with 20 cars ($10 x 3)" (vector-ref (cr-R1 p) 20) 30.0 1.0e-4)
+(check-near "location 2: expected rent with 20 cars ($10 x 4)" (vector-ref (cr-R2 p) 20) 40.0 1.0e-4)
+(check-true "moves limited by the cars present" (and (cr-valid? (+ (* 3 21) 0) 3) (not (cr-valid? (+ (* 3 21) 0) 4))
+                                                     (cr-valid? 5 -5) (not (cr-valid? 4 -5))))
+
+; --- 10 synchronous sweeps of pi0 (move nothing) from V = 0, then one improvement
+(define (v i j) (vector-ref (cr-V p) (+ (* i 21) j)))
+(define (pol i j) (vector-ref (cr-pol p) (+ (* i 21) j)))
+(cr-eval-n! p 10)
+(check-near "10 sweeps of pi0: v(0,0)" (v 0 0) 241.273659 1.0e-4)
+(check-near "10 sweeps of pi0: v(20,20)" (v 20 20) 435.161739 1.0e-4)
+(check-near "10 sweeps of pi0: v(5,15)" (v 5 15) 395.321963 1.0e-4)
+(define changed (cr-improve! p))
+(check-true "improvement changes 321 states" (= changed 321))
+(check-true "improved policy at (20,0)=5 (0,20)=-4 (10,10)=3 (15,3)=5"
+            (and (= (pol 20 0) 5) (= (pol 0 20) -4) (= (pol 10 10) 3) (= (pol 15 3) 5)))
+
+; --- gambler's problem, ph = 0.4
+(define g (gb-new))
+(define (gv s) (vector-ref g s))
+(define sw1 (make-vector 101 0.0))
+(define sweeps (gb-value-iteration! g 0.4 1.0e-9 (lambda (k v) (if (= k 1) (vector-set! sw1 99 (vector-ref v 99)) #f))))
+(check-true "value iteration converges in 17 sweeps (theta 1e-9)" (= sweeps 17))
+(check-near "sweep 1: v(99)" (vector-ref sw1 99) 0.953344 1.0e-6)
+(check-near "v(25) = 0.4^2" (gv 25) 0.16 1.0e-6)
+(check-near "v(50) = ph" (gv 50) 0.4 1.0e-6)
+(check-near "v(75) = 0.4 + 0.6 * 0.4" (gv 75) 0.64 1.0e-6)
+(check-near "v(51)" (gv 51) 0.403098 1.0e-6)
+(check-near "v(1)" (gv 1) 0.002066 1.0e-6)
+(check-near "v(99)" (gv 99) 0.964333 1.0e-6)
+(check-true "policy: all-in at 50, stake 25 at 25 and 75, 12 at 12 and 13, 1 at 51 and 99"
+            (and (= (gb-policy g 0.4 50 1.0e-6) 50) (= (gb-policy g 0.4 25 1.0e-6) 25)
+                 (= (gb-policy g 0.4 75 1.0e-6) 25) (= (gb-policy g 0.4 12 1.0e-6) 12)
+                 (= (gb-policy g 0.4 13 1.0e-6) 12) (= (gb-policy g 0.4 51 1.0e-6) 1)
+                 (= (gb-policy g 0.4 99 1.0e-6) 1)))

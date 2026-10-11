@@ -1,0 +1,135 @@
+; algos/sample-updates.aura — expected vs sample updates (Sec 8.5, Figure 8.7) and
+; trajectory sampling vs uniform sweeps (Sec 8.6, Figure 8.8).
+;
+; Figure 8.7: a state with b equally likely successors whose values are N(0, 1)
+; draws; the true value is their mean. An expected update costs b successor
+; evaluations and has zero error afterwards. Sample updates draw one successor at
+; a time (with replacement) and average: after t draws the RMS error is about
+; √((b−1)/(b t)). (es-rms! b runs ts) → vector of RMS errors at the counts in ts.
+;
+; Figure 8.8: random episodic tasks with n states, 2 actions and branching b. Each
+; (s,a) leads to one of b fixed random successors (equally likely) with a fixed
+; N(0,1) reward per (s,a,k); every transition ends the episode with probability
+; 0.1 (reward 0). Episodes start in state 0; γ = 1. The expected update is
+;   Q(s,a) ← 0.9 · mean_k [ r(s,a,k) + max_a' Q(s_k, a') ].
+; Uniform: cycle through all (s,a) in order. On-policy: follow ε-greedy (ε = 0.1)
+; trajectories from state 0 and update each pair visited. The value of the start
+; state under the greedy policy (first maximal action) is computed by in-place
+; iterative policy evaluation (to 1e-4), not by Monte Carlo.
+; Loops are top-level recursion (named let entries are never reclaimed, aura#4459).
+
+(require "rl/rng" all:)
+(require "rl/vec" all:)
+
+(export es-rms! ts-task ts-run!)
+
+; ---- Figure 8.7
+; ts: list of draw counts (ascending). Returns a vector, one RMS per count.
+(define (es-rms! b runs ts)
+  (let ((acc (make-vector (length ts) 0.0))
+        (vals (make-vector b 0.0)))
+    (es-runs! b runs ts vals acc 0)
+    (es-sqrt! acc runs 0)))
+(define (es-sqrt! acc runs i)
+  (if (< i (vector-length acc))
+      (begin (vector-set! acc i (sqrt (/ (vector-ref acc i) runs))) (es-sqrt! acc runs (+ i 1)))
+      acc))
+(define (es-runs! b runs ts vals acc r)
+  (if (< r runs)
+      (begin
+        (es-fill! vals b 0)
+        (es-draw! vals b (/ (vec-sum vals) b) ts acc 1 0.0 0)
+        (es-runs! b runs ts vals acc (+ r 1)))
+      acc))
+(define (es-fill! vals b i)
+  (if (< i b) (begin (vector-set! vals i (rng-normal! 0.0 1.0)) (es-fill! vals b (+ i 1))) vals))
+; t = draws so far + 1; sum of drawn values; j = index into ts / acc
+(define (es-draw! vals b truth ts acc t sum j)
+  (if (null? ts)
+      acc
+      (let* ((s2 (+ sum (vector-ref vals (rng-int! b))))
+             (err (- (/ s2 t) truth)))
+        (if (= t (car ts))
+            (begin (vec-add-at! acc j (* err err))
+                   (es-draw! vals b truth (cdr ts) acc (+ t 1) s2 (+ j 1)))
+            (es-draw! vals b truth ts acc (+ t 1) s2 j)))))
+
+; ---- Figure 8.8
+; task = #(n b next rew)   next/rew indexed ((s*2 + a)*b + k)
+(define (ts-task n b)
+  (let ((t (make-vector 4 0))
+        (nx (make-vector (* n 2 b) 0))
+        (rw (make-vector (* n 2 b) 0.0)))
+    (ts-fill! nx rw n 0 (* n 2 b))
+    (vector-set! t 0 n)
+    (vector-set! t 1 b)
+    (vector-set! t 2 nx)
+    (vector-set! t 3 rw)
+    t))
+(define (ts-fill! nx rw n i m)
+  (if (< i m)
+      (begin (vector-set! nx i (rng-int! n))
+             (vector-set! rw i (rng-normal! 0.0 1.0))
+             (ts-fill! nx rw n (+ i 1) m))
+      #f))
+
+(define (q2max q s) (max (vector-ref q (* 2 s)) (vector-ref q (+ 1 (* 2 s)))))
+(define (q2greedy q s) (if (> (vector-ref q (+ 1 (* 2 s))) (vector-ref q (* 2 s))) 1 0))
+(define (q2eps! q s eps)
+  (if (< (rng-uniform!) eps)
+      (rng-int! 2)
+      (let ((q0 (vector-ref q (* 2 s))) (q1 (vector-ref q (+ 1 (* 2 s)))))
+        (if (> q1 q0) 1 (if (> q0 q1) 0 (rng-int! 2))))))
+
+(define (ts-sum-q task q base k b acc)
+  (if (< k b)
+      (ts-sum-q task q base (+ k 1) b
+                (+ acc (vector-ref (vector-ref task 3) (+ base k))
+                   (q2max q (vector-ref (vector-ref task 2) (+ base k)))))
+      acc))
+(define (ts-backup! task q s a)
+  (let ((b (vector-ref task 1)))
+    (vector-set! q (+ (* 2 s) a)
+                 (* 0.9 (/ (ts-sum-q task q (* (+ (* 2 s) a) b) 0 b 0.0) b)))))
+
+; v_greedy(0): in-place evaluation of the greedy policy until max |Δv| < 1e-4
+(define (ts-sum-v task v base k b acc)
+  (if (< k b)
+      (ts-sum-v task v base (+ k 1) b
+                (+ acc (vector-ref (vector-ref task 3) (+ base k))
+                   (vector-ref v (vector-ref (vector-ref task 2) (+ base k)))))
+      acc))
+(define (ts-eval-sweep! task q v s delta)
+  (if (< s (vector-ref task 0))
+      (let* ((b (vector-ref task 1))
+             (new (* 0.9 (/ (ts-sum-v task v (* (+ (* 2 s) (q2greedy q s)) b) 0 b 0.0) b)))
+             (old (vector-ref v s)))
+        (vector-set! v s new)
+        (ts-eval-sweep! task q v (+ s 1) (max delta (abs (- new old)))))
+      delta))
+(define (ts-eval task q v)
+  (if (< (ts-eval-sweep! task q v 0 0.0) 1.0e-4) (vector-ref v 0) (ts-eval task q v)))
+
+; Run `updates` expected updates with method 'uniform or 'on-policy, evaluating
+; the start state every `every` updates (and at 0). → vector of values
+(define (ts-run! task method updates every)
+  (let ((q (make-vector (* 2 (vector-ref task 0)) 0.0))
+        (v (make-vector (vector-ref task 0) 0.0))
+        (out (make-vector (+ 1 (quotient updates every)) 0.0)))
+    (ts-loop! task (equal? method 'uniform) q v out 0 updates every 0)
+    out))
+(define (ts-loop! task uniform? q v out i updates every s)
+  (if (= (modulo i every) 0) (vector-set! out (quotient i every) (ts-eval task q v)) #f)
+  (if (< i updates)
+      (if uniform?
+          (begin
+            (ts-backup! task q (modulo (quotient i 2) (vector-ref task 0)) (modulo i 2))
+            (ts-loop! task uniform? q v out (+ i 1) updates every s))
+          (let ((a (q2eps! q s 0.1)))
+            (ts-backup! task q s a)
+            (ts-loop! task uniform? q v out (+ i 1) updates every
+                      (if (< (rng-uniform!) 0.1)
+                          0
+                          (vector-ref (vector-ref task 2)
+                                      (+ (* (+ (* 2 s) a) (vector-ref task 1)) (rng-int! (vector-ref task 1))))))))
+      out))

@@ -1,0 +1,189 @@
+; envs/car-rental.aura — Jack's car rental (Example 4.2) and its policy iteration.
+;
+; Two locations, at most 20 cars each, at most 5 cars moved overnight ($2 per car).
+; Each rental earns $10. Requests and returns are Poisson: λ = 3 / 4 requests and
+; 3 / 2 returns at locations 1 / 2. Returned cars are available the next day; cars
+; above 20 leave the system. γ = 0.9. State s = i*21 + j (i cars at location 1,
+; j at location 2); action a ∈ -5..5 is the net number moved from location 1 to 2.
+; Poisson tails are cut at 25 (the lost mass is below 1e-10).
+;
+; The day factorizes: after the move each location evolves independently, so
+;   q(s,a) = -2|a| + E[n1, n2],  n1 = min(i-a, 20), n2 = min(j+a, 20)
+;   E[n1,n2] = R1[n1] + R2[n2] + γ Σ_{n1'} T1[n1][n1'] Σ_{n2'} T2[n2][n2'] V[n1'][n2']
+; Each synchronous evaluation sweep fills W = V·T2ᵀ and then E (2 × 21³ products),
+; instead of 441 × 26² terms per state for the plain sum over requests and returns.
+; Loops are top-level recursion (named let entries are never reclaimed, aura#4459).
+
+(require "rl/vec" all:)
+
+(export cr-n cr-ns cr-new cr-pois cr-T1 cr-R1 cr-R2 cr-V cr-pol cr-q cr-eval! cr-eval-n! cr-improve!
+        cr-policy-iteration! cr-print-policy cr-valid? cr-refresh!)
+
+(define cr-n 21)
+(define cr-ns 441)
+(define cr-K 25)
+
+(define (cr-pois lam K)
+  (let ((v (make-vector (+ K 1) 0.0)))
+    (vector-set! v 0 (exp (- 0.0 lam)))
+    (cr-pois-fill! v lam 1 K)))
+(define (cr-pois-fill! v lam k K)
+  (if (<= k K)
+      (begin (vector-set! v k (/ (* (vector-ref v (- k 1)) lam) k))
+             (cr-pois-fill! v lam (+ k 1) K))
+      v))
+
+; One location: T[n*21+n'] = P(n' cars tomorrow | n cars after the move),
+; R[n] = expected rent today.
+(define (cr-loc lreq lret)
+  (let ((pr (cr-pois lreq cr-K))
+        (pt (cr-pois lret cr-K))
+        (T (make-vector cr-ns 0.0))
+        (R (make-vector cr-n 0.0)))
+    (cr-loc-n! pr pt T R 0)
+    (cons T R)))
+(define (cr-loc-n! pr pt T R n)
+  (if (< n cr-n) (begin (cr-loc-k! pr pt T R n 0) (cr-loc-n! pr pt T R (+ n 1))) #f))
+(define (cr-loc-k! pr pt T R n k)
+  (if (<= k cr-K)
+      (let* ((p (vector-ref pr k))
+             (rented (min k n)))
+        (vec-add-at! R n (* p 10.0 rented))
+        (cr-loc-j! pt T (* n cr-n) (- n rented) p 0)
+        (cr-loc-k! pr pt T R n (+ k 1)))
+      #f))
+(define (cr-loc-j! pt T base m p j)
+  (if (<= j cr-K)
+      (begin (vec-add-at! T (+ base (min 20 (+ m j))) (* p (vector-ref pt j)))
+             (cr-loc-j! pt T base m p (+ j 1)))
+      #f))
+
+; problem = #(T1 R1 T2 R2 W E V pol gamma)
+(define (cr-new gamma)
+  (let ((l1 (cr-loc 3.0 3.0))
+        (l2 (cr-loc 4.0 2.0))
+        (p (make-vector 9 0)))
+    (vector-set! p 0 (car l1))
+    (vector-set! p 1 (cdr l1))
+    (vector-set! p 2 (car l2))
+    (vector-set! p 3 (cdr l2))
+    (vector-set! p 4 (make-vector cr-ns 0.0))
+    (vector-set! p 5 (make-vector cr-ns 0.0))
+    (vector-set! p 6 (make-vector cr-ns 0.0))
+    (vector-set! p 7 (make-vector cr-ns 0))
+    (vector-set! p 8 gamma)
+    p))
+(define (cr-T1 p) (vector-ref p 0))
+(define (cr-R1 p) (vector-ref p 1))
+(define (cr-R2 p) (vector-ref p 3))
+(define (cr-V p) (vector-ref p 6))
+(define (cr-pol p) (vector-ref p 7))
+
+(define (cr-dot X xb Y yb k acc)
+  (if (< k cr-n)
+      (cr-dot X xb Y yb (+ k 1) (+ acc (* (vector-ref X (+ xb k)) (vector-ref Y (+ yb k)))))
+      acc))
+(define (cr-dot-col X xb Y yb k acc)
+  (if (< k cr-n)
+      (cr-dot-col X xb Y yb (+ k 1)
+                  (+ acc (* (vector-ref X (+ xb k)) (vector-ref Y (+ yb (* k cr-n))))))
+      acc))
+
+; W[n1'*21+n2] = Σ_{n2'} T2[n2][n2'] V[n1'][n2']
+(define (cr-fill-w! T2 V W idx)
+  (if (< idx cr-ns)
+      (begin
+        (vector-set! W idx (cr-dot T2 (* (modulo idx cr-n) cr-n) V (* (quotient idx cr-n) cr-n) 0 0.0))
+        (cr-fill-w! T2 V W (+ idx 1)))
+      #f))
+; E[n1*21+n2] = R1[n1] + R2[n2] + γ Σ_{n1'} T1[n1][n1'] W[n1'][n2]
+(define (cr-fill-e! T1 R1 R2 W E gamma idx)
+  (if (< idx cr-ns)
+      (let ((n1 (quotient idx cr-n))
+            (n2 (modulo idx cr-n)))
+        (vector-set! E idx (+ (vector-ref R1 n1) (vector-ref R2 n2)
+                              (* gamma (cr-dot-col T1 (* n1 cr-n) W n2 0 0.0))))
+        (cr-fill-e! T1 R1 R2 W E gamma (+ idx 1)))
+      #f))
+; E from the current V
+(define (cr-refresh! p)
+  (cr-fill-w! (vector-ref p 2) (cr-V p) (vector-ref p 4) 0)
+  (cr-fill-e! (cr-T1 p) (cr-R1 p) (vector-ref p 3) (vector-ref p 4) (vector-ref p 5) (vector-ref p 8) 0))
+
+(define (cr-valid? s a)
+  (and (>= (quotient s cr-n) a) (>= (modulo s cr-n) (- 0 a))))
+; q(s,a) from the last refresh (a must be valid)
+(define (cr-q p s a)
+  (- (vector-ref (vector-ref p 5)
+                 (+ (* (min 20 (- (quotient s cr-n) a)) cr-n) (min 20 (+ (modulo s cr-n) a))))
+     (* 2.0 (abs a))))
+
+; Synchronous policy evaluation of pol until max |ΔV| < theta. → sweeps
+(define (cr-eval! p theta)
+  (cr-eval-sweep! p theta 1))
+(define (cr-eval-sweep! p theta k)
+  (cr-refresh! p)
+  (if (< (cr-eval-states! p 0 0.0) theta) k (cr-eval-sweep! p theta (+ k 1))))
+(define (cr-eval-states! p s delta)
+  (if (< s cr-ns)
+      (let ((new (cr-q p s (vector-ref (cr-pol p) s)))
+            (old (vector-ref (cr-V p) s)))
+        (vector-set! (cr-V p) s new)
+        (cr-eval-states! p (+ s 1) (max delta (abs (- new old)))))
+      delta))
+
+; Exactly n synchronous evaluation sweeps (for small tests). → n
+(define (cr-eval-n! p n)
+  (if (> n 0)
+      (begin (cr-refresh! p) (cr-eval-states! p 0 0.0) (+ 1 (cr-eval-n! p (- n 1))))
+      0))
+
+; Greedy improvement; keeps the old action unless another is better by > 1e-9.
+; → number of states whose action changed
+(define (cr-improve! p)
+  (cr-refresh! p)
+  (cr-improve-states! p 0 0))
+(define (cr-improve-states! p s changed)
+  (if (< s cr-ns)
+      (let* ((old (vector-ref (cr-pol p) s))
+             (best (cr-best p s -5 old (+ (cr-q p s old) 1.0e-9))))
+        (vector-set! (cr-pol p) s best)
+        (cr-improve-states! p (+ s 1) (if (= best old) changed (+ changed 1))))
+      changed))
+(define (cr-best p s a best bq)
+  (if (<= a 5)
+      (if (cr-valid? s a)
+          (let ((q (cr-q p s a)))
+            (if (> q bq) (cr-best p s (+ a 1) a q) (cr-best p s (+ a 1) best bq)))
+          (cr-best p s (+ a 1) best bq))
+      best))
+
+; Policy iteration from the current pol (all zeros for a new problem).
+; (on-round round policy-before sweeps changed) is called after each round.
+; → index of the last round (the one with no change)
+(define (cr-policy-iteration! p theta on-round)
+  (cr-pi-round! p theta on-round 0))
+(define (cr-pi-round! p theta on-round r)
+  (let* ((before (vec-copy (cr-pol p)))
+         (sweeps (cr-eval! p theta))
+         (changed (cr-improve! p)))
+    (on-round r before sweeps changed)
+    (if (= changed 0) r (cr-pi-round! p theta on-round (+ r 1)))))
+
+; Policy grid as in Figure 4.2: rows = cars at location 1 (20 at the top),
+; columns = cars at location 2 (0 on the left).
+(define (cr-print-policy pol)
+  (cr-print-row pol 20))
+(define (cr-print-row pol i)
+  (if (>= i 0)
+      (begin
+        (display (string-pad-left (number->string i) 3)) (display " |")
+        (cr-print-cell pol i 0)
+        (newline)
+        (cr-print-row pol (- i 1)))
+      #f))
+(define (cr-print-cell pol i j)
+  (if (< j cr-n)
+      (begin (display (string-pad-left (number->string (vector-ref pol (+ (* i cr-n) j))) 3))
+             (cr-print-cell pol i (+ j 1)))
+      #f))

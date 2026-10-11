@@ -9,13 +9,13 @@ The project also works as a stress test for [Aura](https://github.com/cybrid-sys
 
 | Chapter | Topic | Status |
 |---|---|---|
-| 2 | Multi-armed bandits | ✅ Fig 2.2–2.5 (ε-greedy, optimistic init, UCB, gradient bandit); Fig 2.6 TODO |
+| 2 | Multi-armed bandits | ✅ Fig 2.2–2.5 (ε-greedy, optimistic init, UCB, gradient bandit), Fig 2.6 parameter study |
 | 3 | Finite MDPs | ✅ Fig 3.2 (v_π), Fig 3.5 (v_*, π_*) |
-| 4 | Dynamic programming | ✅ 4×4 gridworld: policy evaluation, policy iteration, value iteration; car rental / gambler TODO |
+| 4 | Dynamic programming | ✅ 4×4 gridworld: policy evaluation, policy iteration, value iteration (Fig 4.1); Jack's car rental by policy iteration (Fig 4.2); gambler's problem by value iteration (Fig 4.3) |
 | 5 | Monte Carlo | ✅ Fig 5.1–5.4, Sec 5.4: first-/every-visit MC prediction, Monte Carlo ES, ε-soft on-policy control, ordinary vs weighted importance sampling |
 | 6 | TD learning | ✅ Ex 6.2 (TD(0) vs constant-α MC), Fig 6.2 batch updating, 6.5 windy gridworld (Sarsa), 6.6 cliff walking (Sarsa / Q-learning / Expected Sarsa), Fig 6.3 interim / asymptotic α sweep, 6.7 maximization bias (Double Q-learning) |
 | 7 | n-step bootstrapping | ✅ Fig 7.2 n-step TD (19-state random walk); n-step Sarsa, n-step Expected Sarsa, n-step Tree Backup, off-policy IS n-step Sarsa and off-policy n-step Q(σ) on cliff walking |
-| 8 | Planning (Dyna) | ✅ Fig 8.2 Dyna-Q (Dyna maze), Fig 8.4 / 8.5 Dyna-Q vs Dyna-Q+ (blocking / shortcut maze); prioritized sweeping, Fig 8.7 / 8.8 TODO |
+| 8 | Planning (Dyna) | ✅ Fig 8.2 Dyna-Q (Dyna maze), Fig 8.4 / 8.5 Dyna-Q vs Dyna-Q+ (blocking / shortcut maze), Example 8.4 prioritized sweeping vs Dyna-Q, Fig 8.7 expected vs sample updates, Fig 8.8 trajectory sampling |
 | 9 | On-policy prediction with approximation | ✅ 1000-state random walk: Fig 9.1 gradient MC and Fig 9.2 semi-gradient TD(0) / n-step TD with state aggregation, Fig 9.5 polynomial vs Fourier bases, Fig 9.8 coarse coding, Fig 9.10 tile coding vs aggregation |
 | 10 | On-policy control with approximation | ✅ mountain car with tile coding: Fig 10.1 cost-to-go, Fig 10.2 semi-gradient Sarsa α sweep, Fig 10.3 n-step Sarsa, Fig 10.4 n × α sweep; Fig 10.5 differential semi-gradient Sarsa on access control |
 | 11 | Off-policy with approximation | ✅ Baird's counterexample: Fig 11.2 semi-gradient off-policy TD and DP diverge, Fig 11.6 TDC (sample and expected), Fig 11.7 expected emphatic TD |
@@ -28,7 +28,7 @@ Each `chapters/chNN_*/README.md` lists the algorithms and figures planned for th
 
 ## Aura version / 锁定的 Aura 版本
 
-Tested against Aura `main` at **`3034d4723`** (2026-10-12, fixes #4453), built with `-DCMAKE_BUILD_TYPE=RelWithDebInfo`. Chapter 13 was written against it; Chapters 9–12 were written against `5cc915687`. Chapters 2–4 were first written against `549fdd3`, Chapters 5–6 against `2f815c188`, Chapter 7 (first part) against `2b36f9f7e`, the rest of Chapter 7 and Chapter 8 against `f093a8887`; all tests pass at the new pin.
+Tested against Aura `main` at **`3034d4723`** (2026-10-12, fixes #4453), built with `-DCMAKE_BUILD_TYPE=RelWithDebInfo`. Chapter 13, Fig 2.6, the car rental and gambler's problems, prioritized sweeping and Figs 8.7–8.8 were written against it; Chapters 9–12 were written against `5cc915687`. Chapters 2–4 were first written against `549fdd3`, Chapters 5–6 against `2f815c188`, Chapter 7 (first part) against `2b36f9f7e`, the rest of Chapter 7 and Chapter 8 against `f093a8887`; all tests pass at the new pin.
 
 Build Aura with an explicit build type. Aura's CMake does not set a default, so a plain `cmake -B build` gives an unoptimized binary that runs these drivers 3–5× slower.
 
@@ -47,13 +47,13 @@ export AURA_PIPELINE_STRICT=0    # the strict pipeline refuses named let / while
 
 ```bash
 export AURA_BIN=$HOME/aura/build/aura   # required; AURA_LIB defaults to $(dirname $AURA_BIN)/../lib
-scripts/run_chapter.sh 2                # 10-armed testbed (RL_RUNS / RL_STEPS / RL_SEED to tune)
+scripts/run_chapter.sh 2                # 10-armed testbed + Fig 2.6 parameter study (about 3 min, release build)
 scripts/run_chapter.sh 3                # 5×5 gridworld
-scripts/run_chapter.sh 4                # 4×4 gridworld DP
+scripts/run_chapter.sh 4                # 4×4 gridworld DP, Jack's car rental, gambler's problem (about 2 min, release build)
 scripts/run_chapter.sh 5                # blackjack MC (about 7 min at the defaults)
 scripts/run_chapter.sh 6                # TD: random walk, batch, windy, cliff, α sweep, max bias (about 35 min)
 scripts/run_chapter.sh 7                # n-step TD / Sarsa / Expected Sarsa / Tree Backup / off-policy IS / Q(σ) (about 40 min)
-scripts/run_chapter.sh 8                # Dyna-Q maze, Dyna-Q vs Dyna-Q+ on blocking / shortcut mazes (about 10 min)
+scripts/run_chapter.sh 8                # Dyna-Q, Dyna-Q+, prioritized sweeping, Fig 8.7 / 8.8 (about 10 min unoptimized + 7 min release build)
 scripts/run_chapter.sh 9                # 1000-state walk: aggregation, n-step TD, poly / Fourier, coarse / tile coding (about 17 min, release build)
 scripts/run_chapter.sh 10               # mountain car Sarsa / n-step / n × α sweep, access control (about 8 min, release build)
 scripts/run_chapter.sh 11               # Baird's counterexample: semi-gradient TD / DP, TDC, emphatic TD (about 3 s)
@@ -79,9 +79,9 @@ Figure 3.5 — v_* (value iteration), sweeps=24
    14.4     16   14.4     13   11.7
 ```
 
-Chapter 2 defaults to 20 runs × 300 steps (the book uses 2000 × 1000) because the Soft interpreter takes about 2 ms per bandit step (the full chapter run takes about 5 min). Raise `RL_RUNS` / `RL_STEPS` for smoother numbers.
+Chapter 2 defaults to 20 runs × 300 steps for Figs 2.2–2.5 and 10 runs × 1000 steps for Fig 2.6 (the book uses 2000 × 1000) because the Soft interpreter takes about 0.6 ms per bandit step on a release build (2 ms unoptimized). Raise `RL_RUNS` / `RL_STEPS` for smoother numbers.
 
-第 2 章默认 20 次 × 300 步（书中是 2000 × 1000），因为 Soft 解释器每步约 2 ms；可用 `RL_RUNS` / `RL_STEPS` 调大。
+第 2 章图 2.2–2.5 默认 20 次 × 300 步、图 2.6 默认 10 次 × 1000 步（书中是 2000 × 1000），因为 Soft 解释器每步约 0.6 ms（release 构建）；可用 `RL_RUNS` / `RL_STEPS` 调大。
 
 ## Results at the defaults / 默认参数下的结果
 
@@ -129,6 +129,17 @@ because the Soft interpreter takes about 1.5 ms per blackjack episode and file m
 | Fig 8.4 blocking maze, 3 runs × 3000 steps | cumulative reward at steps 1000 / 1500 / 3000: Dyna-Q 51 / 56.7 / 110, Dyna-Q+ 55.3 / 57.3 / 135.3; flat after the change at step 1000, Dyna-Q+ recovers faster | Dyna-Q+ ahead after the change | 440 s (both mazes) |
 | Fig 8.5 shortcut maze, 3 runs × 6000 steps | reward gained in steps 3001–6000: Dyna-Q 164 (about one goal per 18 steps, long path), Dyna-Q+ 225.7 (about one per 13 steps, shortcut) | Dyna-Q+ finds the shortcut, Dyna-Q does not | |
 
+**Gap fill at `3034d4723` (RelWithDebInfo): Fig 2.6, Chapter 4 examples, Chapter 8 Sec 8.4–8.6**
+
+| Driver | Result | Book | Wall |
+|---|---|---|---|
+| Fig 2.6 parameter study, 50 runs × 1000 steps (same testbeds for every point) | ε-greedy peaks at ε = 1/16 (1.303; 1.089 at 1/128, 1.096 at 1/4); gradient + baseline at α = 1/4 (1.363); UCB flat at c = 1/4–1 (1.466 / 1.448, 1.134 at c = 4); optimistic greedy at Q1 = 1 (1.424) | inverted U for every method; UCB best | 13 min (default 10 runs: 2.5 min) |
+| Example 4.2 Jack's car rental, policy iteration, θ = 1e-4 | 318 / 272 / 79 / 8 / 0 states change in rounds 0–4 (126 / 91 / 80 / 45 / 14 sweeps); stops at π4; v_π4 from 421.4 at (0, 0) to 637.0 at (20, 20); identical to `tests/oracle/car_rental.py` | π4 optimal | 115 s |
+| Example 4.3 gambler's problem, p_h = 0.4, θ = 1e-9 | 17 sweeps; v(25) = 0.16, v(50) = 0.4, v(75) = 0.64, v(99) = 0.9643; smallest optimal stake 1…12, 12…1, 25 on each quarter, 50 at s = 50 | Fig 4.3 policy shape | 1 s |
+| Example 8.4 prioritized sweeping vs Dyna-Q, 2 runs, n = 5, α = 0.5 | updates until a near-optimal path at resolution 1 / 2 / 3: 1 133 / 7 198 / 21 903 vs 10 455 / 14 082 / 54 873 | prioritized sweeping 5–10× fewer | 3 min |
+| Fig 8.7 expected vs sample updates, 100 runs | RMS after b sample computations: b = 10 0.334, b = 100 0.102, b = 1000 0.029 (√((b−1)/b²): 0.300 / 0.099 / 0.032) | samples cut most error well before b | 13 s |
+| Fig 8.8 trajectory sampling, 1000 states, 2 tasks, 6000 updates | start-state value after 500 updates, on-policy vs uniform: b = 1 6.51 vs 4.28, b = 3 1.62 vs 0.78; after 6000: 6.51 vs 8.04, 2.67 vs 3.23 | on-policy faster early, uniform better later | 4 min |
+
 **Chapter 9 (1000-state random walk; exact v_π from `lib/oracle/walk1000-exact.aura`)**
 
 | Driver | Result | Book | Wall |
@@ -148,20 +159,29 @@ because the Soft interpreter takes about 1.5 ms per blackjack episode and file m
 
 **Chapter 13 (short corridor, 20 runs × 1000 episodes, `3034d4723`)**: mean reward over episodes 501–1000 is −11.9 / −13.0 / −16.8 for REINFORCE at α = 2^-12 / 2^-13 / 2^-14, −11.8 with baseline (−13.1 already in episodes 51–100) and −12.1 for one-step actor-critic (−11.9 in episodes 51–100); v* = −11.66. Full table in `chapters/ch13_policy_gradient/README.md`. 247 s.
 
-Tests (`scripts/run_tests.sh`): 239 checks in 16 files, all pass at `3034d4723` with a RelWithDebInfo build in about 7 min (Ch12: 15 checks in 95 s; Ch13: 31 checks in 22 s).
+Tests (`scripts/run_tests.sh`): 278 checks in 18 files, all pass at `3034d4723` with a RelWithDebInfo build in about 6 min (Ch12: 15 checks in 95 s; Ch13: 31 checks in 22 s).
+
+## Coverage / 覆盖范围
+
+Every experiment of Chapters 2–13 that the reference repository implements now has an Aura driver and an oracle test. Not ported: Chapter 1 tic-tac-toe (the reference's `chapter01/tic_tac_toe.py`), exercises that are not figures (e.g. Exercise 4.7's modified car rental), and the book's full run sizes, which the Soft interpreter cannot reach in reasonable time (every driver has `RL_*` knobs).
+
+第 2–13 章中参考仓库实现的实验都已有 Aura 版本和测试；未移植的是第 1 章井字棋、非图表类习题（如习题 4.7），以及书中的完整运行规模。
 
 ## Layout / 目录
 
 ```text
 lib/rl/       rng (Park–Miller LCG, Box–Muller), vec helpers, tuple (cons-built lists), check (test oracle)
 lib/rl/       (also) knobs: RL_* run-size knobs from the environment
-lib/envs/     gridworld, blackjack, cliffwalking, random-walk, windy, maze (Dyna / blocking / shortcut),
+lib/envs/     gridworld, car-rental (Example 4.2, with its policy iteration), gambler (Example 4.3,
+              with its value iteration), blackjack, cliffwalking, random-walk, windy,
+              maze (Dyna / blocking / shortcut, k× resolution for Example 8.4),
               walk1000 (Example 9.1), mountain-car (Example 10.1), baird (Example 11.1),
               short-corridor (Example 13.1)
 lib/algos/    bandit (Ch2), dp (Ch3–4), mc (Ch5: MC prediction, MC ES, ε-soft, off-policy IS),
               td (Ch6: TD(0), Sarsa, Q-learning, Expected Sarsa, Double Q-learning),
               td-batch (Fig 6.2 batch TD / MC), nstep (Ch7: n-step TD, Sarsa, Expected Sarsa, Tree Backup,
-              off-policy IS n-step Sarsa, Q(σ)), dyna (Ch8: Dyna-Q, Dyna-Q+),
+              off-policy IS n-step Sarsa, Q(σ)), dyna (Ch8: Dyna-Q, Dyna-Q+), prioritized (Ch8: prioritized
+              sweeping, heap), sample-updates (Ch8: Fig 8.7 / 8.8),
               approx (Ch9: tile coder, gradient MC, semi-gradient n-step TD, coarse coding),
               semigrad-sarsa (Ch10: mountain-car tile coder, semi-gradient n-step Sarsa),
               basis (Ch9 polynomial / Fourier), diff-sarsa (Ch10 access control), offpolicy-approx (Ch11),

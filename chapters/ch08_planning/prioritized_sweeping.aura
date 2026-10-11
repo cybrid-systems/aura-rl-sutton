@@ -1,0 +1,49 @@
+; Chapter 8 — prioritized sweeping vs Dyna-Q (Sec 8.4, Example 8.4).
+; The Dyna maze at resolutions k = 1 … RL_MAXRES (6×9 cells become 6k×9k);
+; both methods use n = 5 planning updates, α = 0.5, ε = 0.1, γ = 0.95
+; (prioritized sweeping: θ = 1e-4). Measure: number of Q updates until the greedy
+; path is within 1.2 × the shortest path (14k), checked after each episode.
+; Dyna-Q counts its real update too (n + 1 per step).
+;
+; Knobs: RL_RUNS (default 2), RL_MAXRES (default 3; the book goes to about 6000
+; states), RL_SEED (2026).
+
+(require "rl/rng" all:)
+(require "rl/vec" all:)
+(require "rl/knobs" all:)
+(require "envs/maze" all:)
+(require "algos/prioritized" all:)
+
+(define runs (env-int "RL_RUNS" 2))
+(define maxres (env-int "RL_MAXRES" 3))
+(define seed (env-int "RL_SEED" 2026))
+
+(define (mean-updates solve k r acc)
+  (if (< r runs)
+      (begin (rng-seed! (+ seed (* 100 k) r))
+             (mean-updates solve k (+ r 1) (+ acc (solve k))))
+      (/ (* 1.0 acc) runs)))
+
+(define (ps k) (ps-updates-to-solve (maze-scale (dyna-maze) k) k 5 0.1 0.5 0.95 0.0001 500))
+(define (dq k) (dyna-updates-to-solve (maze-scale (dyna-maze) k) k 5 0.1 0.5 0.95 500))
+
+(display "Example 8.4: updates until optimal solution, runs=") (display runs) (newline)
+(display "  res  states  prioritized    Dyna-Q   ratio") (newline)
+(define (row k)
+  (if (<= k maxres)
+      (let* ((mz (maze-scale (dyna-maze) k))
+             (free (count-free mz 0 0))
+             (a (mean-updates ps k 0 0))
+             (b (mean-updates dq k 0 0)))
+        (display (string-pad-left (number->string k) 5))
+        (display (string-pad-left (number->string free) 8))
+        (display (string-pad-left (number->string (round-to a 0)) 13))
+        (display (string-pad-left (number->string (round-to b 0)) 10))
+        (display (fmt (/ b a) 1))
+        (newline)
+        (row (+ k 1)))
+      #f))
+(define (count-free mz s c)
+  (if (< s (maze-nS mz)) (count-free mz (+ s 1) (if (maze-wall? mz s) c (+ c 1))) c))
+(row 1)
+(display "done") (newline)

@@ -1,0 +1,29 @@
+; Chapter 4 — the gambler's problem (Example 4.3, Figure 4.3): value iteration.
+; ph = RL_PH (default 0.4), θ = 1e-9. Prints the value estimates after sweeps
+; 1, 2, 3 and at convergence, and the final policy (smallest optimal stake).
+
+(require "envs/gambler" all:)
+(require "rl/vec" all:)
+(require "rl/knobs" all:)
+
+(define ph (env-float "RL_PH" 0.4))
+(define v (gb-new))
+
+(define (show-v label v)
+  (display (string-pad-right label 12))
+  (display " v(1)=") (display (fmt (vector-ref v 1) 4))
+  (display " v(25)=") (display (fmt (vector-ref v 25) 4))
+  (display " v(50)=") (display (fmt (vector-ref v 50) 4))
+  (display " v(51)=") (display (fmt (vector-ref v 51) 4))
+  (display " v(75)=") (display (fmt (vector-ref v 75) 4))
+  (display " v(99)=") (display (fmt (vector-ref v 99) 4))
+  (newline))
+
+(display "Example 4.3 gambler's problem: ph=") (display (number->string ph)) (newline)
+(define sweeps
+  (gb-value-iteration! v ph 1.0e-9
+                       (lambda (k v) (if (<= k 3) (show-v (string-append "sweep " (number->string k)) v) #f))))
+(show-v (string-append "sweep " (number->string sweeps)) v)
+(display "final policy (stake per capital):") (newline)
+(gb-print-policy v ph 1.0e-6)
+(display "done") (newline)
