@@ -1,0 +1,64 @@
+; Chapter 6 — interim and asymptotic performance vs α on cliff walking (Figure 6.3).
+; Sarsa, Expected Sarsa and Q-learning with ε = 0.1, γ = 1. Interim = mean reward
+; per episode over the first RL_EPISODES episodes; asymptotic = mean over a longer
+; run (book: 100 000 episodes). Expected Sarsa stays good up to α = 1, Sarsa
+; degrades at large α, Q-learning is worst online.
+;
+; Knobs: RL_RUNS (interim runs, default 4; book 50 000), RL_EPISODES (default 100),
+;        RL_ASYM_RUNS (default 1; book 10), RL_ASYM_EPISODES (default 500), RL_SEED.
+
+(require "rl/rng" all:)
+(require "rl/vec" all:)
+(require "rl/knobs" all:)
+(require "envs/cliffwalking" all:)
+(require "algos/td" all:)
+
+(define runs (env-int "RL_RUNS" 4))
+(define episodes (env-int "RL_EPISODES" 100))
+(define asym-runs (env-int "RL_ASYM_RUNS" 1))
+(define asym-episodes (env-int "RL_ASYM_EPISODES" 500))
+(rng-seed! (env-int "RL_SEED" 2026))
+
+(define alphas (cons 0.1 (cons 0.3 (cons 0.5 (cons 0.7 (cons 0.9 (cons 1.0 '())))))))
+(define nS (* cw-rows cw-cols))
+
+; Mean reward per episode over runs × episodes.
+(define (perf method alpha nruns neps)
+  (let ((acc (make-vector 1 0.0)))
+    (let run ((k 0))
+      (if (< k nruns)
+          (let ((q (make-vector (* nS 4) 0.0)))
+            (let ep ((i 0))
+              (if (< i neps)
+                  (begin
+                    (vec-add-at! acc 0 (car (td-control-episode! method q cw-step cw-start 4 0.1 alpha 1.0)))
+                    (ep (+ i 1)))
+                  #f))
+            (run (+ k 1)))
+          #f))
+    (/ (vector-ref acc 0) (* 1.0 nruns neps))))
+
+(define (cell x) (display (string-pad-left (number->string (round-to x 1)) 10)))
+
+(display "Figure 6.3 — mean reward per episode on cliff walking (eps = 0.1)") (newline)
+(display "  interim: ") (display runs) (display " runs x ") (display episodes)
+(display " episodes; asymptotic: ") (display asym-runs) (display " run(s) x ")
+(display asym-episodes) (display " episodes") (newline)
+(display "  alpha |  Sarsa   Exp.Sarsa  Q-learn  (interim) |  Sarsa   Exp.Sarsa  Q-learn  (asymptotic)")
+(newline)
+(define (sweep l)
+  (if (null? l)
+      #t
+      (let ((a (car l)))
+        (display (string-pad-left (number->string a) 7)) (display " |")
+        (cell (perf 'sarsa a runs episodes))
+        (cell (perf 'expected a runs episodes))
+        (cell (perf 'q a runs episodes))
+        (display "            |")
+        (cell (perf 'sarsa a asym-runs asym-episodes))
+        (cell (perf 'expected a asym-runs asym-episodes))
+        (cell (perf 'q a asym-runs asym-episodes))
+        (newline)
+        (sweep (cdr l)))))
+(sweep alphas)
+(display "done") (newline)

@@ -1,0 +1,181 @@
+; algos/nstep.aura — n-step bootstrapping (Sutton & Barto, Chapter 7).
+;
+; Prediction: n-step TD (Sec 7.1) on the random walk; RMS error averaged over the
+; first E episodes (Figure 7.2).
+; Control (Sec 7.2–7.5) on any episodic tabular env (step s a) → (s' r done?):
+;   'sarsa     n-step Sarsa (on-policy, ε-greedy)
+;   'expected  n-step Expected Sarsa (last step: expectation under ε-greedy)
+;   'tree      n-step Tree Backup (target policy greedy, behaviour ε-greedy)
+;
+; S, A, R are ring buffers of length n+1 indexed t mod (n+1); this is all the
+; history an update at τ = t−n+1 reads. T = −1 means "episode not over yet".
+
+(require "rl/rng" all:)
+(require "rl/vec" all:)
+(require "rl/tuple" all:)
+(require "envs/random-walk" all:)
+(require "algos/td" all:)
+
+(export ns-td-episode! ns-td-rms! ns-control-episode! ns-pi-greedy ns-control-curve!)
+
+(define (ns-rms v truth n)
+  (let lp ((s 1) (acc 0.0))
+    (if (<= s n)
+        (let ((d (- (vector-ref v s) (vector-ref truth s))))
+          (lp (+ s 1) (+ acc (* d d))))
+        (sqrt (/ acc n)))))
+
+(define (ring-ref buf m t) (vector-ref buf (modulo t m)))
+(define (ring-set! buf m t x) (vector-set! buf (modulo t m) x))
+
+; γ^k
+(define (ns-pow g k) (if (= k 0) 1.0 (* g (ns-pow g (- k 1)))))
+
+; Σ_{i=lo}^{hi} γ^(i−lo) R_i over the ring buffer (top-level recursion, not a
+; named let: named-let entries are never reclaimed in file mode, aura#4459).
+(define (ns-rsum R m i hi gamma w acc)
+  (if (<= i hi) (ns-rsum R m (+ i 1) hi gamma (* w gamma) (+ acc (* w (ring-ref R m i)))) acc))
+
+; ---------------------------------------------------------------------------
+; n-step TD prediction on the random walk with N non-terminal states (left
+; terminal pays -1, right +1, γ = 1). Updates v in place.
+
+(define (ns-td-episode! v nstates n alpha)
+  (let* ((m (+ n 1))
+         (S (make-vector m 0))
+         (R (make-vector m 0.0)))
+    (ring-set! S m 0 (rw-start nstates))
+    (let lp ((t 0) (T -1))
+      (let ((T2 (if (and (< T 0) #t)
+                    (let* ((st (rw-step! (ring-ref S m t) nstates -1))
+                           (done (car (cddr st))))
+                      (ring-set! S m (+ t 1) (car st))
+                      (ring-set! R m (+ t 1) (* 1.0 (cadr st)))
+                      (if done (+ t 1) -1))
+                    T))
+            (tau (- (+ t 1) n)))
+        (if (>= tau 0)
+            (let* ((hi (if (< T2 0) (+ tau n) (min (+ tau n) T2)))
+                   (g (ns-rsum R m (+ tau 1) hi 1.0 1.0 0.0))
+                   (g2 (if (or (< T2 0) (< (+ tau n) T2))
+                           (+ g (vector-ref v (ring-ref S m (+ tau n))))
+                           g))
+                   (s (ring-ref S m tau)))
+              (vec-add-at! v s (* alpha (- g2 (vector-ref v s)))))
+            #f)
+        (if (and (>= T2 0) (= tau (- T2 1)))
+            #t
+            (lp (+ t 1) T2))))))
+
+; Mean (over runs and over the first `episodes` episodes) RMS error of n-step TD.
+(define (ns-td-rms! nstates n alpha runs episodes)
+  (let ((truth (rw-true-values nstates -1))
+        (acc (make-vector 1 0.0)))
+    (let run ((k 0))
+      (if (< k runs)
+          (let ((v (make-vector (+ nstates 2) 0.0)))
+            (let ep ((i 0))
+              (if (< i episodes)
+                  (begin (ns-td-episode! v nstates n alpha)
+                         (vec-add-at! acc 0 (ns-rms v truth nstates))
+                         (ep (+ i 1)))
+                  #f))
+            (run (+ k 1)))
+          #f))
+    (/ (vector-ref acc 0) (* 1.0 runs episodes))))
+
+; ---------------------------------------------------------------------------
+; Control.
+
+; π(a|s) for the greedy target policy, ties split evenly.
+(define (ns-pi-greedy q nA s a)
+  (if (= (q-get q nA s a) (q-max q nA s)) (/ 1.0 (q-nmax q nA s)) 0.0))
+
+; Σ_a π(a|s) Q(s,a) for ε-greedy behaviour (expected) — ties do not matter:
+; every maximal action has value max.
+(define (ns-v-eps q nA s eps)
+  (+ (* (- 1.0 eps) (q-max q nA s)) (* eps (q-mean q nA s))))
+
+; Tree Backup return for update time tau, given the current t and T (T>=0 or -1).
+(define (ns-tree-return q nA S A R m tau t T gamma)
+  (let* ((last (if (< T 0) t (min t (- T 1))))
+         (g0 (if (and (>= T 0) (>= (+ t 1) T))
+                 (ring-ref R m T)
+                 (+ (ring-ref R m (+ t 1))
+                    (* gamma (q-max q nA (ring-ref S m (+ t 1))))))))
+    (ns-tree-back q nA S A R m tau last g0 gamma)))
+
+; k = last … tau+1:  G ← R_k + γ Σ_{a≠A_k} π(a|S_k) Q(S_k,a) + γ π(A_k|S_k) G
+(define (ns-tree-back q nA S A R m tau k g gamma)
+  (if (<= k tau)
+      g
+      (let* ((sk (ring-ref S m k))
+             (ak (ring-ref A m k))
+             (pk (ns-pi-greedy q nA sk ak))
+             ; Σ_{a≠A_k} π(a|S_k) Q(S_k,a) = max Q − π(A_k) Q(S_k,A_k) for greedy π
+             (rest (- (q-max q nA sk) (* pk (q-get q nA sk ak)))))
+        (ns-tree-back q nA S A R m tau (- k 1)
+                      (+ (ring-ref R m k) (* gamma rest) (* gamma pk g)) gamma))))
+
+; Sarsa / Expected Sarsa return for update time tau.
+(define (ns-sarsa-return method q nA S A R m tau n T eps gamma)
+  (let* ((hi (if (< T 0) (+ tau n) (min (+ tau n) T)))
+         (g (ns-rsum R m (+ tau 1) hi gamma 1.0 0.0)))
+    (if (or (< T 0) (< (+ tau n) T))
+        (let ((sn (ring-ref S m (+ tau n))))
+          (+ g (* (ns-pow gamma n)
+                  (if (equal? method 'sarsa)
+                      (q-get q nA sn (ring-ref A m (+ tau n)))
+                      (ns-v-eps q nA sn eps)))))
+        g)))
+
+; One episode. → (list total-reward steps)
+(define (ns-control-episode! method q step start nA n eps alpha gamma)
+  (let* ((m (+ n 1))
+         (S (make-vector m 0))
+         (A (make-vector m 0))
+         (R (make-vector m 0.0)))
+    (ring-set! S m 0 start)
+    (ring-set! A m 0 (q-eps-greedy! q nA start eps))
+    (let lp ((t 0) (T -1) (total 0.0))
+      (let* ((stepped (< T 0))
+             (res (if stepped (step (ring-ref S m t) (ring-ref A m t)) #f))
+             (T2 (if stepped
+                     (begin
+                       (ring-set! S m (+ t 1) (car res))
+                       (ring-set! R m (+ t 1) (* 1.0 (cadr res)))
+                       (if (car (cddr res))
+                           (+ t 1)
+                           (begin (ring-set! A m (+ t 1) (q-eps-greedy! q nA (car res) eps))
+                                  -1)))
+                     T))
+             (total2 (if stepped (+ total (cadr res)) total))
+             (tau (- (+ t 1) n)))
+        (if (>= tau 0)
+            (let* ((g (if (equal? method 'tree)
+                          (ns-tree-return q nA S A R m tau t T2 gamma)
+                          (ns-sarsa-return method q nA S A R m tau n T2 eps gamma)))
+                   (i (+ (* (ring-ref S m tau) nA) (ring-ref A m tau))))
+              (vector-set! q i (+ (vector-ref q i) (* alpha (- g (vector-ref q i))))))
+            #f)
+        (if (and (>= T2 0) (>= tau (- T2 1)))
+            (tup2 total2 T2)
+            (lp (+ t 1) T2 total2))))))
+
+; Mean reward per episode over runs. → vector of length episodes
+(define (ns-control-curve! method step start nS nA n eps alpha runs episodes)
+  (let ((out (make-vector episodes 0.0)))
+    (let run ((k 0))
+      (if (< k runs)
+          (let ((q (make-vector (* nS nA) 0.0)))
+            (let ep ((i 0))
+              (if (< i episodes)
+                  (begin
+                    (vec-add-at! out i (car (ns-control-episode! method q step start nA n eps alpha gamma-1)))
+                    (ep (+ i 1)))
+                  #f))
+            (run (+ k 1)))
+          #f))
+    (vec-scale! out (/ 1.0 runs))))
+
+(define gamma-1 1.0)

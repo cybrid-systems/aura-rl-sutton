@@ -1,0 +1,58 @@
+; Chapter 7 — n-step control on cliff walking (Sec 7.2, 7.4 and 7.5):
+; n-step Sarsa, n-step Expected Sarsa (both on-policy, ε-greedy) and n-step Tree
+; Backup (off-policy: greedy target, ε-greedy behaviour, no importance sampling).
+; ε = 0.1, γ = 1. Reports the online sum of rewards per episode (mean over runs,
+; last half of training) and the greedy path length of the last run.
+; With n = 1 the three are Sarsa, Expected Sarsa and Q-learning (checked in tests).
+;
+; Knobs: RL_RUNS (default 3), RL_EPISODES (default 200), RL_ALPHA (default 0.2), RL_SEED.
+
+(require "rl/rng" all:)
+(require "rl/vec" all:)
+(require "rl/knobs" all:)
+(require "envs/cliffwalking" all:)
+(require "algos/td" all:)
+(require "algos/nstep" all:)
+
+(define runs (env-int "RL_RUNS" 3))
+(define episodes (env-int "RL_EPISODES" 200))
+(define alpha (env-float "RL_ALPHA" 0.2))
+(rng-seed! (env-int "RL_SEED" 2026))
+(define nS (* cw-rows cw-cols))
+(define half (quotient episodes 2))
+
+; → (cons mean-reward-over-last-half greedy-path-length-of-last-run)
+(define (train method n)
+  (let ((acc (make-vector 1 0.0)) (lastq (make-vector 1 #f)))
+    (let run ((k 0))
+      (if (< k runs)
+          (let ((q (make-vector (* nS 4) 0.0)))
+            (let ep ((i 0))
+              (if (< i episodes)
+                  (let ((r (car (ns-control-episode! method q cw-step cw-start 4 n 0.1 alpha 1.0))))
+                    (if (>= i half) (vec-add-at! acc 0 r) #f)
+                    (ep (+ i 1)))
+                  #f))
+            (vector-set! lastq 0 q)
+            (run (+ k 1)))
+          #f))
+    (cons (/ (vector-ref acc 0) (* 1.0 runs (- episodes half)))
+          (- (length (td-greedy-path (vector-ref lastq 0) cw-step cw-start 4 100)) 1))))
+
+(define (cell p)
+  (display (string-pad-left (number->string (round-to (car p) 1)) 9))
+  (display (string-pad-left (string-append "(" (number->string (cdr p)) ")") 6)))
+
+(display "n-step control, cliff walking: mean reward per episode, episodes ")
+(display (+ half 1)) (display "-") (display episodes) (display ", ") (display runs)
+(display " runs, alpha=") (display alpha) (newline)
+(display "  (greedy path length of the last run in parentheses; 13 = cliff edge)") (newline)
+(display "      n       Sarsa       Exp.Sarsa    TreeBackup") (newline)
+(define (rows l)
+  (if (null? l) #t
+      (let ((n (car l)))
+        (display (string-pad-left (number->string n) 7))
+        (cell (train 'sarsa n)) (cell (train 'expected n)) (cell (train 'tree n))
+        (newline) (rows (cdr l)))))
+(rows (cons 1 (cons 2 (cons 4 (cons 8 '())))))
+(display "done") (newline)

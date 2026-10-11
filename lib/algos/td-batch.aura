@@ -1,0 +1,101 @@
+; algos/td-batch.aura — batch updating on the 5-state random walk (Sec 6.3, Figure 6.2).
+;
+; After each new episode, all episodes seen so far are replayed: the increments
+; of every step of every stored episode are summed with V held fixed, scaled by
+; α, and applied; this repeats until the summed |increment| drops below 1e-3.
+;
+; The stored episodes enter the increment only through counts, so they are kept
+; as sufficient statistics (same arithmetic as replaying each trajectory):
+;   TD(0): n(s→s-1), n(s→s+1)        Σ_t [r + V(s') − V(s)]
+;   MC   : visits N(s), Σ returns G(s)  Σ_t [G − V(s)]   (every-visit, γ = 1)
+
+(require "rl/rng" all:)
+(require "rl/vec" all:)
+(require "rl/tuple" all:)
+(require "envs/random-walk" all:)
+
+(export td-batch-rms! batch-sweeps-last)
+
+(define batch-sweeps (make-vector 1 0))
+(define (batch-sweeps-last) (vector-ref batch-sweeps 0))
+
+(define (b-rms v truth n)
+  (let lp ((s 1) (acc 0.0))
+    (if (<= s n)
+        (let ((d (- (vector-ref v s) (vector-ref truth s))))
+          (lp (+ s 1) (+ acc (* d d))))
+        (sqrt (/ acc n)))))
+
+; Generate one episode and fold it into the statistics.
+; stats: cl cr (TD transition counts), nv sg (MC visit counts / return sums).
+(define (b-record! n cl cr nv sg)
+  (let lp ((s (rw-start n)) (path '()))
+    (let* ((st (rw-step! s n 0))
+           (s2 (car st))
+           (done (car (cddr st))))
+      (if (= s2 (- s 1)) (vec-add-at! cl s 1) (vec-add-at! cr s 1))
+      (if done
+          (let ((g (* 1.0 (cadr st))))
+            (let up ((l (cons s path)))
+              (if (null? l)
+                  #t
+                  (begin (vec-add-at! nv (car l) 1) (vec-add-at! sg (car l) g)
+                         (up (cdr l))))))
+          (lp s2 (cons s path))))))
+
+; Value of s' for TD targets: terminals are 0, reward 1 only into n+1.
+(define (b-next v n s2) (if (or (= s2 0) (= s2 (+ n 1))) 0.0 (vector-ref v s2)))
+(define (b-rew n s2) (if (= s2 (+ n 1)) 1.0 0.0))
+
+; Summed increment for state s (before scaling by α).
+(define (b-inc method v n s cl cr nv sg)
+  (if (equal? method 'td)
+      (+ (* (vector-ref cl s) (- (+ (b-rew n (- s 1)) (b-next v n (- s 1))) (vector-ref v s)))
+         (* (vector-ref cr s) (- (+ (b-rew n (+ s 1)) (b-next v n (+ s 1))) (vector-ref v s))))
+      (- (vector-ref sg s) (* (vector-ref nv s) (vector-ref v s)))))
+
+; Sweep until Σ|α·inc| < 1e-3 (or max-sweeps). Returns sweeps done.
+(define (b-converge! method v n alpha cl cr nv sg max-sweeps)
+  (let ((inc (make-vector (+ n 2) 0.0)))
+    (let sweep ((k 0))
+      (if (>= k max-sweeps)
+          k
+          (let ((tot (let lp ((s 1) (acc 0.0))
+                       (if (<= s n)
+                           (let ((d (* alpha (b-inc method v n s cl cr nv sg))))
+                             (vector-set! inc s d)
+                             (lp (+ s 1) (+ acc (abs d))))
+                           acc))))
+            (if (< tot 0.001)
+                (+ k 1)
+                (begin
+                  (let lp ((s 1))
+                    (if (<= s n) (begin (vec-add-at! v s (vector-ref inc s)) (lp (+ s 1))) #f))
+                  (sweep (+ k 1)))))))))
+
+; Mean RMS error over runs after each of 1..episodes episodes (index 0 = before any).
+(define (td-batch-rms! method alpha runs episodes)
+  (let* ((n 5)
+         (truth (rw-true-values n 0))
+         (out (make-vector (+ episodes 1) 0.0)))
+    (vector-set! batch-sweeps 0 0)
+    (let run ((k 0))
+      (if (< k runs)
+          (let ((v (make-vector (+ n 2) 0.5))
+                (cl (make-vector (+ n 2) 0)) (cr (make-vector (+ n 2) 0))
+                (nv (make-vector (+ n 2) 0)) (sg (make-vector (+ n 2) 0.0)))
+            (vector-set! v 0 0.0) (vector-set! v (+ n 1) 0.0)
+            (vec-add-at! out 0 (b-rms v truth n))
+            (let ep ((i 1))
+              (if (<= i episodes)
+                  (begin
+                    (b-record! n cl cr nv sg)
+                    (vector-set! batch-sweeps 0
+                                 (+ (vector-ref batch-sweeps 0)
+                                    (b-converge! method v n alpha cl cr nv sg 100000)))
+                    (vec-add-at! out i (b-rms v truth n))
+                    (ep (+ i 1)))
+                  #f))
+            (run (+ k 1)))
+          #f))
+    (vec-scale! out (/ 1.0 runs))))

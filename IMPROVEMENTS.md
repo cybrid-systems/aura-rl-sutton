@@ -1,6 +1,6 @@
 # Aura findings from the RL port / 移植中发现的 Aura 问题
 
-Aura tip: `2f815c18864f8eb0d22bdf978e472eabc40c2906` (#4453–#4458 first seen at `549fdd3`). Each bug has a minimal repro and an upstream issue.
+Aura tip: `2b36f9f7e27135be16f87327c2d1c77eda722fec` (#4453–#4458 first seen at `549fdd3`, #4459–#4461 at `2f815c188`). Each bug has a minimal repro and an upstream issue. At `2b36f9f7e`, #4454 (`when` tail call), #4455 (`eq?` on symbols), #4456 (`vector-ref` float index) and #4461 (`/` by a variable zero) still reproduce; all of #4453–#4461 are open.
 Soft = `AURA_SANDBOX=off AURA_PIPELINE_STRICT=0`; default = no env vars (Restricted + strict pipeline).
 
 ## Bugs filed upstream / 已提 issue
@@ -16,6 +16,7 @@ Soft = `AURA_SANDBOX=off AURA_PIPELINE_STRICT=0`; default = no env vars (Restric
 | 7 | File mode never reclaims closures: every `lambda` evaluation and every named-`let` entry keeps about 1.2 KB until exit. `Evaluator::compact_sweep` is only called from the serve scheduler; the file runner never reaches it, and `(gc)` / `(gc-heap)` clear live roots (#4449). | Ch5 blackjack drivers grew 5–8 KB per episode (1.06 GB at 126 000 episodes); Ch6 cliff walking peaks at about 1.5 GB | smaller default run sizes; no per-episode `lambda` | [#4459](https://github.com/cybrid-systems/aura/issues/4459) |
 | 8 | A failed `require` (missing module or parse error in the module) prints `load_module_file:` and `<error>`, silently skips every later top-level form, and exits 0. A test file with a typo in a library "passes" with no checks. | test runner during Ch5/Ch6 | `run_tests.sh` fails on zero `PASS` lines and on `load_module_file:` / `<error>` | [#4460](https://github.com/cybrid-systems/aura/issues/4460) |
 | 9 | `/` by a zero that is not a literal (a variable, parameter, `vector-ref`, expression) silently returns the integer `0`, for ints and floats; a literal zero divisor raises `DivisionByZero`. The `/` primitive maps every `arithmetic_div_pure` error to `make_int(0)`. `log` / `sqrt` / overflow already return IEEE `-inf` / `nan` / `inf`. | MC averages over unvisited states, importance-sampling ratios | explicit `(if (> n 0) …)` guards | [#4461](https://github.com/cybrid-systems/aura/issues/4461) |
+| 10 | Integers outside the 63-bit fixnum range are not handled: `+` / `-` / `*` only check for int64 overflow, so a result in [2^62, 2^63) (e.g. `(+ c c 2)` with `c` = 2^61−1) reaches `make_int` and aborts the process with SIGABRT; the literal `4611686018427387904` and `string->number` of it abort too. −2^62 prints `0`, the literal −2^62 prints `<unknown>`, and `(* 4294967296 4294967296)` with literal arguments constant-folds to `0` while the same product through variables gives `1.84467e+19`. Residual of closed #1150. | probing integer arithmetic for hash / LCG helpers in Ch7 | Park–Miller LCG keeps products below 2^46 | [#4462](https://github.com/cybrid-systems/aura/issues/4462) |
 
 ## Improvement notes (not filed) / 改进点（未提 issue）
 
@@ -23,11 +24,12 @@ Soft = `AURA_SANDBOX=off AURA_PIPELINE_STRICT=0`; default = no env vars (Restric
 - Restricted (default sandbox) denies `vector-set!` without a Mutate grant, but the denial is silent: `(display (vector-set! v 1 7))` prints `<unknown>`, the vector is unchanged, and the run exits 0. Numeric code computes wrong answers with no warning.
 - Errors from primitives display as `<unknown>` and do not stop the program or change the exit code. There is no `exit` primitive, so test runners must grep for `FAIL`.
 - `(display (vector 1 2 3))` prints `<vector[0]>`, which shows the heap slot and not the contents or length. `vector->list` is needed to inspect values.
-- Missing common Scheme procedures: `do`, `exact->inexact`, `exact`, `vector-fill!`, `vector-map`, `vector-copy`, `assoc`, `assq`, `eqv?`, `truncate` (only `trunc`), `let-values`, `iota`, `exit`, and SRFI-69 hash tables (`make-hash-table`).
+- Missing common Scheme procedures: `do`, `case`, `exact->inexact`, `exact`, `exact?`, `ceiling` (only `ceil`), `vector-fill!`, `vector-map`, `vector-copy`, `assoc`, `assq`, `assv`, `eqv?`, `string->symbol`, `symbol->string`, `truncate` (only `trunc`), `let-values`, `iota`, `exit`, and SRFI-69 hash tables (`make-hash-table`).
 - `round` rounds halves away from zero (`(round 2.5)` → `3`, `(round 0.5)` → `1`); R7RS rounds to even (`2`, `0`).
 - Out-of-range `vector-ref` is inconsistent: index 5 on a 3-vector returns `<error>`, index −1 returns `<unknown>`; neither stops the program.
 - `(/ 7 2)` → `3` (integer division) while `(/ 7.0 2)` → `3.5`. Averages need an explicit `(* 1.0 x)`.
-- Floats print with 6 significant digits (`123456.789` → `123457`, `3.0` → `3`).
-- Soft interpreter speed: about 40 µs per simple loop iteration and about 2 ms per bandit step (10 arms). That is why Ch2 defaults to 20 runs × 300 steps.
+- `display` prints floats with 6 significant digits (`123456.789` → `123457`, `(/ 1.0 3)` → `0.333333`, `3.0` → `3`), while `number->string` round-trips (`123456.789`, `0.3333333333333333`). Results printed with `display` lose precision that `number->string` keeps.
+- Soft interpreter speed: about 40 µs per simple loop iteration and about 2 ms per bandit step (10 arms). That is why Ch2 defaults to 20 runs × 300 steps. A call to a 4-iteration max-over-a-vector helper costs about 240 µs (200 000 calls in 48–51 s), so tabular control spends most of its time in `max` / `argmax` over 4 actions: cliff walking runs at about 40 ms per episode, and the Fig 6.3 α sweep (18 configurations) takes 13 min at 4 runs × 100 episodes.
+- Named-`let` memory (#4459) shapes the code: 200 000 calls of a helper whose loop is a named `let` peak at 328 MB; the same helper written as a top-level recursive procedure peaks at 111 MB. `lib/algos/td.aura` and `lib/algos/nstep.aura` use top-level recursion for the per-step helpers (`q-max`, `q-argmax-tie!`, return sums, Tree Backup) for that reason.
 - File mode echoes the value of the last top-level form (a trailing `#t` / `#f` after program output).
 - `AURA_SANDBOX=strict` fails while loading the std prelude ("Soft oneshot std prelude failed … tree-walker fallback forbidden").

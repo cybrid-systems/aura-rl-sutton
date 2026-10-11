@@ -11,7 +11,7 @@
 (require "rl/tuple" all:)
 (require "envs/random-walk" all:)
 
-(export td-rw-rms! td-rw-values! q-get q-argmax q-argmax-tie! q-eps-greedy! q-max
+(export td-rw-rms! td-rw-values! q-get q-argmax q-argmax-tie! q-eps-greedy! q-max q-mean q-nmax
         td-control-episode! td-greedy-path td-maxbias-run!)
 
 ; ---------------------------------------------------------------------------
@@ -83,31 +83,42 @@
 
 (define (q-get q nA s a) (vector-ref q (+ (* s nA) a)))
 
-(define (q-max q nA s)
-  (let lp ((a 1) (m (q-get q nA s 0)))
-    (if (< a nA) (lp (+ a 1) (max m (q-get q nA s a))) m)))
+; The helpers below recurse through top-level procedures instead of named
+; `let`: in file mode every named-let entry allocates a closure that is never
+; reclaimed (cybrid-systems/aura#4459), and these run several times per step.
 
-(define (q-mean q nA s)
-  (let lp ((a 0) (acc 0.0))
-    (if (< a nA) (lp (+ a 1) (+ acc (q-get q nA s a))) (/ acc nA))))
+(define (q-max-from q base nA a m)
+  (if (< a nA) (q-max-from q base nA (+ a 1) (max m (vector-ref q (+ base a)))) m))
+(define (q-max q nA s)
+  (let ((base (* s nA))) (q-max-from q base nA 1 (vector-ref q base))))
+
+(define (q-sum-from q base nA a acc)
+  (if (< a nA) (q-sum-from q base nA (+ a 1) (+ acc (vector-ref q (+ base a)))) acc))
+(define (q-mean q nA s) (/ (q-sum-from q (* s nA) nA 0 0.0) nA))
 
 ; first maximal action (deterministic; used for printing greedy paths)
-(define (q-argmax q nA s)
-  (let lp ((a 1) (best 0))
-    (if (< a nA)
-        (lp (+ a 1) (if (> (q-get q nA s a) (q-get q nA s best)) a best))
-        best)))
+(define (q-argmax-from q base nA a best)
+  (if (< a nA)
+      (q-argmax-from q base nA (+ a 1)
+                     (if (> (vector-ref q (+ base a)) (vector-ref q (+ base best))) a best))
+      best))
+(define (q-argmax q nA s) (q-argmax-from q (* s nA) nA 1 0))
 
-; maximal action, ties broken uniformly at random
+; maximal action, ties broken uniformly at random (reservoir sampling)
+(define (q-tie-from q base nA m a cnt pick)
+  (if (< a nA)
+      (if (= (vector-ref q (+ base a)) m)
+          (let ((c (+ cnt 1)))
+            (q-tie-from q base nA m (+ a 1) c (if (= (rng-int! c) 0) a pick)))
+          (q-tie-from q base nA m (+ a 1) cnt pick))
+      pick))
 (define (q-argmax-tie! q nA s)
-  (let ((m (q-max q nA s)))
-    (let lp ((a 0) (cnt 0) (pick 0))
-      (if (< a nA)
-          (if (= (q-get q nA s a) m)
-              (let ((c (+ cnt 1)))
-                (lp (+ a 1) c (if (= (rng-int! c) 0) a pick)))
-              (lp (+ a 1) cnt pick))
-          pick))))
+  (q-tie-from q (* s nA) nA (q-max q nA s) 0 0 0))
+
+; number of maximal actions in s
+(define (q-nmax-from q base nA m a c)
+  (if (< a nA) (q-nmax-from q base nA m (+ a 1) (if (= (vector-ref q (+ base a)) m) (+ c 1) c)) c))
+(define (q-nmax q nA s) (q-nmax-from q (* s nA) nA (q-max q nA s) 0 0))
 
 (define (q-eps-greedy! q nA s eps)
   (if (< (rng-uniform!) eps) (rng-int! nA) (q-argmax-tie! q nA s)))

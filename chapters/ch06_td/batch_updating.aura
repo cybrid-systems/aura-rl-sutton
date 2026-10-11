@@ -1,0 +1,36 @@
+; Chapter 6 — batch updating on the 5-state random walk (Sec 6.3, Figure 6.2).
+; After every episode, batch TD(0) and batch constant-α MC (α = 0.001) replay all
+; episodes seen so far until the values stop changing (Σ|ΔV| < 1e-3). Batch TD
+; converges to the certainty-equivalence estimate and ends with lower RMS error.
+;
+; Knobs: RL_RUNS (default 20; book 100), RL_EPISODES (default 100), RL_SEED.
+
+(require "rl/rng" all:)
+(require "rl/vec" all:)
+(require "rl/knobs" all:)
+(require "algos/td-batch" all:)
+
+(define runs (env-int "RL_RUNS" 20))
+(define episodes (env-int "RL_EPISODES" 100))
+(define seed (env-int "RL_SEED" 2026))
+
+(rng-seed! seed)
+(define td (td-batch-rms! 'td 0.001 runs episodes))
+(define td-sweeps (batch-sweeps-last))
+(rng-seed! seed)
+(define mc (td-batch-rms! 'mc 0.001 runs episodes))
+
+(display "Figure 6.2 — batch training, RMS error averaged over ") (display runs)
+(display " runs (alpha = 0.001)") (newline)
+(display "  episode   batch TD   batch MC") (newline)
+(define (row i)
+  (display (string-pad-left (number->string i) 9))
+  (display (string-pad-left (number->string (round-to (vector-ref td i) 3)) 11))
+  (display (string-pad-left (number->string (round-to (vector-ref mc i) 3)) 11))
+  (newline))
+(define (rows l) (if (null? l) #t (begin (if (<= (car l) episodes) (row (car l)) #f) (rows (cdr l)))))
+(rows (cons 1 (cons 5 (cons 10 (cons 25 (cons 50 (cons 75 (cons 100 '()))))))))
+(if (> episodes 100) (row episodes) #f)
+(display "  sweeps per episode (TD, mean): ")
+(display (round-to (/ (* 1.0 td-sweeps) (* runs episodes)) 1)) (newline)
+(display "done") (newline)
