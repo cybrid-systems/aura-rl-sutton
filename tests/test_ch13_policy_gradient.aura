@@ -1,0 +1,77 @@
+; Chapter 13 oracle: short corridor (Example 13.1). The environment and the exact
+; value of Exercise 13.1 first; then REINFORCE, REINFORCE with baseline and
+; one-step actor-critic must match tests/oracle/short_corridor.py, an independent
+; Python implementation that replays the same Park-Miller PRNG (seed 7, 200
+; episodes from theta = (-1.47, 1.47)); finally the qualitative ordering of
+; Figures 13.1 / 13.2 over a few runs.
+(require "rl/check" all:)
+(require "rl/rng" all:)
+(require "envs/short-corridor" all:)
+(require "algos/policy-gradient" all:)
+
+; --- environment: right/left in state 1 are switched
+(check-true "corridor: right from 0 -> 1, left from 0 stays" (if (= (sc-step 0 1) 1) (= (sc-step 0 0) 0) #f))
+(check-true "corridor: state 1 is switched (right -> 0, left -> 2)" (if (= (sc-step 1 1) 0) (= (sc-step 1 0) 2) #f))
+(check-true "corridor: right from 2 -> terminal, left from 2 -> 1" (if (= (sc-step 2 1) 3) (= (sc-step 2 0) 1) #f))
+(check-near "ex13.1 p* = 2 - sqrt 2 (python 0.5857864376)" sc-best-p 0.5857864376 0.0000000001)
+(check-near "ex13.1 v* = -11.6568542 (python)" (sc-true-value sc-best-p) -11.6568542495 0.0000001)
+(check-near "ex13.1 v(p = 0.5) = -12" (sc-true-value 0.5) -12.0 0.0000001)
+(check-near "ex13.1 v(p = 0.05) = -82.105 (start policy)" (sc-true-value 0.05) -82.1052631579 0.0000001)
+
+; Monte Carlo of a fixed policy agrees with the closed form
+(define (mc k acc) (if (> k 0) (mc (- k 1) (+ acc (pg-fixed-episode!))) acc))
+(rng-seed! 11)
+(pg-reset! 0.0 0.0)
+(check-near "fixed p = 0.5: pi(right)" (pg-p-right) 0.5 0.0000001)
+(check-near "fixed p = 0.5: MC mean return over 3000 episodes ~ -12" (/ (mc 3000 0.0) 3000.0) -12.0 0.8)
+(pg-reset! 0.1732867951 -0.1732867951)   ; logit(p*) / 2 on each side
+(check-near "fixed p = p*: pi(right)" (pg-p-right) sc-best-p 0.000001)
+(check-near "fixed p = p*: MC mean return over 3000 episodes ~ -11.66" (/ (mc 3000 0.0) 3000.0) -11.657 0.8)
+(pg-reset! -1.47 1.47)
+(check-near "start policy theta = (-1.47, 1.47): pi(right) = 0.0502 (clip not active)" (pg-p-right) 0.0502113 0.000001)
+(pg-reset! -5.0 5.0)
+(check-near "pi(right) clipped at 0.05" (pg-p-right) 0.05 0.0)
+
+; --- oracle: same PRNG stream as tests/oracle/short_corridor.py
+(define (eps m k alpha aw acc)
+  (if (> k 0)
+      (eps m (- k 1) alpha aw
+           (+ acc (if (= m 0) (pg-reinforce! alpha)
+                      (if (= m 1) (pg-reinforce-baseline! alpha aw) (pg-actor-critic! alpha aw)))))
+      acc))
+(define (train m alpha aw) (rng-seed! 7) (pg-reset! -1.47 1.47) (/ (eps m 200 alpha aw 0.0) 200.0))
+
+(define m0 (train 0 0.0001220703125 0.0))
+(check-near "fig13.1 REINFORCE 2^-13: theta_right after 200 episodes (python -0.8287254718)" (vector-ref pg-theta 0) -0.8287254718 0.0000001)
+(check-near "fig13.1 REINFORCE 2^-13: theta is antisymmetric" (+ (vector-ref pg-theta 0) (vector-ref pg-theta 1)) 0.0 0.0000001)
+(check-near "fig13.1 REINFORCE 2^-13: mean return (python -39.52)" m0 -39.52 0.0000001)
+(define m1 (train 0 0.000244140625 0.0))
+(check-near "fig13.1 REINFORCE 2^-12: pi(right) (python 0.4063029765)" (pg-p-right) 0.4063029765 0.0000001)
+(check-near "fig13.1 REINFORCE 2^-12: mean return (python -29.165)" m1 -29.165 0.0000001)
+(define m2 (train 1 0.001953125 0.015625))
+(check-near "fig13.2 baseline: theta_right (python 0.1813529123)" (vector-ref pg-theta 0) 0.1813529123 0.0000001)
+(check-near "fig13.2 baseline: w (python -6.6785078760)" (vector-ref pg-baseline 0) -6.6785078760 0.0000001)
+(check-near "fig13.2 baseline: mean return (python -15.72)" m2 -15.72 0.0000001)
+(define m3 (train 2 0.015625 0.0625))
+(check-near "actor-critic: theta_right (python 0.0726605127)" (vector-ref pg-theta 0) 0.0726605127 0.0000001)
+(check-near "actor-critic: v(0) (python -13.6905911473)" (vector-ref pg-critic 0) -13.6905911473 0.0000001)
+(check-near "actor-critic: v(1) (python -11.8026471004)" (vector-ref pg-critic 1) -11.8026471004 0.0000001)
+(check-near "actor-critic: v(2) (python -7.7975425873)" (vector-ref pg-critic 2) -7.7975425873 0.0000001)
+(check-near "actor-critic: mean return (python -13.0)" m3 -13.0 0.0000001)
+
+; --- qualitative (Figures 13.1 / 13.2): 4 runs x 300 episodes, mean return of episodes 101-300
+(define (late m alpha aw r acc)
+  (if (< r 4)
+      (begin (rng-seed! (+ 2026 (* 1000 r))) (pg-reset! -1.47 1.47)
+             (eps m 100 alpha aw 0.0)
+             (late m alpha aw (+ r 1) (+ acc (/ (eps m 200 alpha aw 0.0) 200.0))))
+      (/ acc 4.0)))
+(define q12 (late 0 0.000244140625 0.0 0 0.0))
+(define q14 (late 0 0.00006103515625 0.0 0 0.0))
+(define qb (late 1 0.001953125 0.015625 0 0.0))
+(define qac (late 2 0.015625 0.0625 0 0.0))
+(check-true "fig13.1 REINFORCE: alpha 2^-12 learns faster than 2^-14" (> q12 q14))
+(check-true "fig13.2 baseline beats REINFORCE 2^-12 over episodes 101-300" (> qb q12))
+(check-range "fig13.2 baseline: episodes 101-300 near v* = -11.66" qb -14.0 -10.5)
+(check-range "actor-critic: episodes 101-300 near v* = -11.66" qac -14.0 -10.5)
+(check-true "no method beats v* by more than noise" (if (< qb -10.5) (< qac -10.5) #f))

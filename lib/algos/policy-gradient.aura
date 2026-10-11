@@ -1,0 +1,104 @@
+; algos/policy-gradient.aura — Chapter 13 on the short corridor (Example 13.1).
+;
+; Policy: softmax in action preferences h(s, a) = theta . x(s, a) with
+; x(right) = (1, 0), x(left) = (0, 1), so pi(right) = 1 / (1 + exp(theta1 - theta0))
+; in every state. Like the book figures, the policy never becomes more
+; deterministic than epsilon = 0.05: pi(right) is clipped to [0.05, 0.95], and the
+; clipped probability is also used in the eligibility vector
+;   grad ln pi(right) = (1 - p, -(1 - p)),  grad ln pi(left) = (-p, p).
+; gamma = 1 throughout, so the gamma^t factors are 1.
+;
+;   REINFORCE (Sec 13.3):  after the episode, for t = 0 .. T-1 in order,
+;     theta += alpha G_t grad ln pi(A_t | theta)          (theta updated in place)
+;   REINFORCE with baseline (Sec 13.4), state-independent baseline w:
+;     delta = G_t - w;  w += alpha_w delta;  theta += alpha delta grad ln pi
+;   one-step actor-critic (Sec 13.5), tabular critic v(s):
+;     delta = R + v(S') - v(S)  (v(terminal) = 0);  v(S) += alpha_w delta;
+;     theta += alpha delta grad ln pi(A | S)
+;
+; G_t = -(T - t) since every reward is -1. State is module-level vectors and the
+; loops are top-level recursion (cybrid-systems/aura#4459, #4454).
+
+(require "rl/rng" all:)
+(require "envs/short-corridor" all:)
+
+(export pg-reset! pg-p-right pg-theta pg-baseline pg-critic
+        pg-reinforce! pg-reinforce-baseline! pg-actor-critic! pg-fixed-episode!)
+
+(define pg-eps 0.05)
+(define pg-cap 100000)                 ; step cap per episode (never reached at p >= 0.05)
+(define pg-theta (make-vector 2 0.0))  ; (theta_right, theta_left)
+(define pg-baseline (make-vector 1 0.0))
+(define pg-critic (make-vector 4 0.0)) ; v(0..2); v(3) = 0 (terminal)
+(define abuf (make-vector 100001 0))   ; actions of the current episode
+
+(define (pg-reset! t0 t1)
+  (vector-set! pg-theta 0 (* 1.0 t0))
+  (vector-set! pg-theta 1 (* 1.0 t1))
+  (vector-set! pg-baseline 0 0.0)
+  (vector-set! pg-critic 0 0.0) (vector-set! pg-critic 1 0.0)
+  (vector-set! pg-critic 2 0.0) (vector-set! pg-critic 3 0.0)
+  #t)
+
+(define (pg-p-right)
+  (let ((p (/ 1.0 (+ 1.0 (exp (- (vector-ref pg-theta 1) (vector-ref pg-theta 0)))))))
+    (if (< p pg-eps) pg-eps (if (> p (- 1.0 pg-eps)) (- 1.0 pg-eps) p))))
+
+(define (act!) (if (< (rng-uniform!) (pg-p-right)) 1 0))
+
+; theta += c * grad ln pi(a)
+(define (step-theta! a c)
+  (let* ((p (pg-p-right))
+         (g0 (if (= a 1) (- 1.0 p) (- 0.0 p))))
+    (vector-set! pg-theta 0 (+ (vector-ref pg-theta 0) (* c g0)))
+    (vector-set! pg-theta 1 (- (vector-ref pg-theta 1) (* c g0)))
+    #t))
+
+; play one episode with the current policy, recording actions; -> T
+(define (gen! s t)
+  (if (= s sc-terminal) t
+      (if (>= t pg-cap) t
+          (let ((a (act!)))
+            (vector-set! abuf t a)
+            (gen! (sc-step s a) (+ t 1))))))
+
+(define (mc-upd! t T alpha)
+  (if (< t T)
+      (begin (step-theta! (vector-ref abuf t) (* alpha (* -1.0 (- T t))))
+             (mc-upd! (+ t 1) T alpha))
+      #t))
+
+(define (mcb-upd! t T alpha alpha-w)
+  (if (< t T)
+      (let ((delta (- (* -1.0 (- T t)) (vector-ref pg-baseline 0))))
+        (vector-set! pg-baseline 0 (+ (vector-ref pg-baseline 0) (* alpha-w delta)))
+        (step-theta! (vector-ref abuf t) (* alpha delta))
+        (mcb-upd! (+ t 1) T alpha alpha-w))
+      #t))
+
+; each returns the episode return (-T)
+(define (pg-reinforce! alpha)
+  (let ((T (gen! sc-start 0)))
+    (mc-upd! 0 T alpha)
+    (* -1.0 T)))
+
+(define (pg-reinforce-baseline! alpha alpha-w)
+  (let ((T (gen! sc-start 0)))
+    (mcb-upd! 0 T alpha alpha-w)
+    (* -1.0 T)))
+
+(define (ac-loop! s t alpha alpha-w)
+  (if (= s sc-terminal) t
+      (if (>= t pg-cap) t
+          (let* ((a (act!))
+                 (s2 (sc-step s a))
+                 (delta (- (+ -1.0 (vector-ref pg-critic s2)) (vector-ref pg-critic s))))
+            (vector-set! pg-critic s (+ (vector-ref pg-critic s) (* alpha-w delta)))
+            (step-theta! a (* alpha delta))
+            (ac-loop! s2 (+ t 1) alpha alpha-w)))))
+
+(define (pg-actor-critic! alpha alpha-w)
+  (* -1.0 (ac-loop! sc-start 0 alpha alpha-w)))
+
+; one episode without learning (evaluates the current policy) -> return
+(define (pg-fixed-episode!) (* -1.0 (gen! sc-start 0)))

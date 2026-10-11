@@ -1,6 +1,6 @@
 # aura-rl-sutton state (machine-readable, key=value)
 aura_repo=https://github.com/cybrid-systems/aura
-aura_tip=5cc915687
+aura_tip=3034d4723  # fixes #4453; ch13 written here, ch2-12 tests re-run here (239 checks pass)
 aura_build=RelWithDebInfo  # no CMAKE_BUILD_TYPE = unoptimized, 3-5x slower
 aura_face=soft  # AURA_SANDBOX=off AURA_PIPELINE_STRICT=0
 reference=https://github.com/ShangtongZhang/reinforcement-learning-an-introduction (read-only cross-check)
@@ -16,8 +16,8 @@ ch09_onpolicy_approx=done   # 1000-state walk: Fig 9.1 gradient MC, Fig 9.2 semi
 ch10_onpolicy_control=done  # mountain car tile coding: Fig 10.1 cost-to-go, Fig 10.2 alpha sweep, Fig 10.3 n-step Sarsa, Fig 10.4 n x alpha sweep; Fig 10.5 access control (differential semi-gradient Sarsa)
 ch11_offpolicy_approx=done  # Baird: Fig 11.2 semi-gradient TD / DP divergence, Fig 11.6 TDC sample + expected, Fig 11.7 expected emphatic TD
 ch12_eligibility_traces=done  # 19-state walk: Fig 12.3 offline lambda-return, Fig 12.6 TD(lambda), Fig 12.8 true online TD(lambda); mountain car Fig 12.10 / 12.11 Sarsa(lambda) replacing / accumulating / true online (small sizes)
-ch13_policy_gradient=todo
+ch13_policy_gradient=done   # short corridor: Fig 13.1 REINFORCE alpha sweep, Fig 13.2 REINFORCE with baseline, one-step actor-critic (tabular critic); python oracle
 
-tests=tests/test_envs.aura tests/test_ch02_bandits.aura tests/test_ch03_ch04_dp.aura tests/test_ch05_mc.aura tests/test_ch06_td.aura tests/test_ch06_batch_sweep.aura tests/test_ch07_nstep.aura tests/test_ch07_offpolicy.aura tests/test_ch08_dyna.aura tests/test_ch09_approx.aura tests/test_ch09_basis.aura tests/test_ch10_mountain_car.aura tests/test_ch10_access_control.aura tests/test_ch11_baird.aura tests/test_ch12_traces.aura  # 208 checks
-next=ch13 policy gradient (REINFORCE / with baseline / actor-critic on the short-corridor gridworld, Fig 13.1 / 13.2); then fill ch02 Fig 2.6, ch04 car rental / gambler, ch08 prioritized sweeping / Fig 8.7 / 8.8; re-pin Aura past 3034d4723 (#4453 fixed on main)
-aura_issues_filed=4453,4454,4455,4456,4457,4458,4459,4460,4461,4462,4463,4464,4465,4466,4467
+tests=tests/test_envs.aura tests/test_ch02_bandits.aura tests/test_ch03_ch04_dp.aura tests/test_ch05_mc.aura tests/test_ch06_td.aura tests/test_ch06_batch_sweep.aura tests/test_ch07_nstep.aura tests/test_ch07_offpolicy.aura tests/test_ch08_dyna.aura tests/test_ch09_approx.aura tests/test_ch09_basis.aura tests/test_ch10_mountain_car.aura tests/test_ch10_access_control.aura tests/test_ch11_baird.aura tests/test_ch12_traces.aura tests/test_ch13_policy_gradient.aura  # 239 checks
+next=fill ch02 Fig 2.6 parameter study, ch04 car rental / gambler, ch08 prioritized sweeping / Fig 8.7 / 8.8 (all chapters 2-13 have drivers)
+aura_issues_filed=4453,4454,4455,4456,4457,4458,4459,4460,4461,4462,4463,4464,4465,4466,4467,4468,4469,4470

@@ -1,0 +1,89 @@
+; Chapter 13 — policy gradient on the short corridor with switched actions
+; (Example 13.1). Every step pays -1; the best stochastic policy goes right with
+; probability p* = 2 - sqrt 2 = 0.586 and earns v* = -11.66 (Exercise 13.1).
+; All methods start from theta = (-1.47, 1.47), i.e. pi(right) = 0.05
+; (epsilon-greedy left), gamma = 1, policy clipped to [0.05, 0.95].
+;
+;   Figure 13.1  REINFORCE, alpha = 2^-12, 2^-13, 2^-14
+;   Figure 13.2  REINFORCE (alpha = 2^-13) vs REINFORCE with baseline
+;                (alpha_theta = 2^-9, alpha_w = 2^-6)
+;   Sec 13.5     one-step actor-critic, tabular critic
+;                (alpha_theta = 2^-6, alpha_w = 2^-4; not in the book's figures)
+;
+; Output: total reward per episode averaged over runs, in blocks of episodes, and
+; the mean final pi(right). The book averages 100 runs of 1000 episodes.
+;
+; Knobs: RL_RUNS (default 20; book 100), RL_EPISODES (1000), RL_SEED.
+; Step sizes are literals: (expt 2.0 -9) does not terminate (cybrid-systems/aura#4458).
+
+(require "rl/rng" all:)
+(require "rl/vec" all:)
+(require "rl/knobs" all:)
+(require "envs/short-corridor" all:)
+(require "algos/policy-gradient" all:)
+
+(define runs (env-int "RL_RUNS" 20))
+(define episodes (env-int "RL_EPISODES" 1000))
+(define seed (env-int "RL_SEED" 2026))
+
+; (method alpha_theta alpha_w label); method 0 REINFORCE, 1 with baseline, 2 actor-critic
+(define cfgs
+  (vector (vector 0 0.000244140625 0.0 "REINFORCE  a=2^-12        ")
+          (vector 0 0.0001220703125 0.0 "REINFORCE  a=2^-13        ")
+          (vector 0 0.00006103515625 0.0 "REINFORCE  a=2^-14        ")
+          (vector 1 0.001953125 0.015625 "+baseline  a=2^-9 aw=2^-6 ")
+          (vector 2 0.015625 0.0625 "actor-crit a=2^-6 aw=2^-4 ")))
+(define nC (vector-length cfgs))
+
+; block edges (episode index, exclusive end)
+(define edges (vector 10 50 100 200 500 1000))
+(define nB (vector-length edges))
+(define (block-of e b) (if (>= b (- nB 1)) b (if (< e (vector-ref edges b)) b (block-of e (+ b 1)))))
+(define (block-lo b) (if (= b 0) 0 (vector-ref edges (- b 1))))
+(define (block-size b) (- (min episodes (vector-ref edges b)) (min episodes (block-lo b))))
+
+(define acc (make-vector (* nC nB) 0.0))
+(define pfin (make-vector nC 0.0))
+
+(define (episode! m a aw)
+  (if (= m 0) (pg-reinforce! a)
+      (if (= m 1) (pg-reinforce-baseline! a aw) (pg-actor-critic! a aw))))
+(define (eps! c m a aw e)
+  (if (< e episodes)
+      (begin (vec-add-at! acc (+ (* c nB) (block-of e 0)) (episode! m a aw))
+             (eps! c m a aw (+ e 1)))
+      #t))
+(define (run-cfg! c r)
+  (let ((x (vector-ref cfgs c)))
+    (rng-seed! (+ seed (* 1000 r)))   ; same seed per run for every method
+    (pg-reset! -1.47 1.47)
+    (eps! c (vector-ref x 0) (vector-ref x 1) (vector-ref x 2) 0)
+    (vec-add-at! pfin c (pg-p-right))))
+(define (cfg-loop c r) (if (< c nC) (begin (run-cfg! c r) (cfg-loop (+ c 1) r)) #t))
+(define (run-loop r) (if (< r runs) (begin (cfg-loop 0 r) (run-loop (+ r 1))) #t))
+
+(define t0 (current-time-ms))
+(run-loop 0)
+
+(define (cell c b)
+  (let ((n (block-size b)))
+    (if (> n 0) (/ (vector-ref acc (+ (* c nB) b)) (* 1.0 runs n)) 0.0)))
+(define (hdr b)
+  (if (< b nB)
+      (begin (display (string-pad-left (string-append (number->string (+ 1 (block-lo b))) "-" (number->string (vector-ref edges b))) 9))
+             (hdr (+ b 1)))
+      (begin (display "  final p") (newline))))
+(define (row c b)
+  (if (< b nB)
+      (begin (display (string-pad-left (number->string (round-to (cell c b) 2)) 9)) (row c (+ b 1)))
+      (begin (display (string-pad-left (number->string (round-to (/ (vector-ref pfin c) (* 1.0 runs)) 3)) 9)) (newline))))
+(define (rows c) (if (< c nC) (begin (display (vector-ref (vector-ref cfgs c) 3)) (row c 0) (rows (+ c 1))) #t))
+
+(display "Short corridor: v* = ") (display (round-to (sc-true-value sc-best-p) 3))
+(display " at p* = ") (display (round-to sc-best-p 4))
+(display "; start policy p = 0.05 gives ") (display (round-to (sc-true-value 0.05) 2)) (newline)
+(display "Mean total reward per episode, ") (display runs) (display " runs x ") (display episodes)
+(display " episodes (Figure 13.1: first three rows; Figure 13.2: rows 2 and 4)") (newline)
+(display "episodes                  ") (hdr 0)
+(rows 0)
+(display "wall ") (display (round-to (/ (- (current-time-ms) t0) 1000.0) 1)) (display " s") (newline)

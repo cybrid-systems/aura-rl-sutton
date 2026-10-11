@@ -20,6 +20,7 @@ The project also works as a stress test for [Aura](https://github.com/cybrid-sys
 | 10 | On-policy control with approximation | ✅ mountain car with tile coding: Fig 10.1 cost-to-go, Fig 10.2 semi-gradient Sarsa α sweep, Fig 10.3 n-step Sarsa, Fig 10.4 n × α sweep; Fig 10.5 differential semi-gradient Sarsa on access control |
 | 11 | Off-policy with approximation | ✅ Baird's counterexample: Fig 11.2 semi-gradient off-policy TD and DP diverge, Fig 11.6 TDC (sample and expected), Fig 11.7 expected emphatic TD |
 | 12 | Eligibility traces | ✅ 19-state walk: Fig 12.3 offline λ-return, Fig 12.6 TD(λ), Fig 12.8 true online TD(λ); mountain car Fig 12.10 Sarsa(λ) with replacing traces and Fig 12.11 replacing / accumulating / true online Sarsa(λ) (small run sizes) |
+| 13 | Policy gradient | ✅ short corridor (Example 13.1): Fig 13.1 REINFORCE α sweep, Fig 13.2 REINFORCE with baseline, one-step actor-critic |
 
 Each `chapters/chNN_*/README.md` lists the algorithms and figures planned for that chapter. [STATE.txt](STATE.txt) has the same status in key=value form.
 
@@ -27,7 +28,7 @@ Each `chapters/chNN_*/README.md` lists the algorithms and figures planned for th
 
 ## Aura version / 锁定的 Aura 版本
 
-Tested against Aura `main` at **`5cc915687`** (2026-10-12), built with `-DCMAKE_BUILD_TYPE=RelWithDebInfo`. Chapters 2–4 were first written against `549fdd3`, Chapters 5–6 against `2f815c188`, Chapter 7 (first part) against `2b36f9f7e`, the rest of Chapter 7 and Chapter 8 against `f093a8887`; all pass at the new pin.
+Tested against Aura `main` at **`3034d4723`** (2026-10-12, fixes #4453), built with `-DCMAKE_BUILD_TYPE=RelWithDebInfo`. Chapter 13 was written against it; Chapters 9–12 were written against `5cc915687`. Chapters 2–4 were first written against `549fdd3`, Chapters 5–6 against `2f815c188`, Chapter 7 (first part) against `2b36f9f7e`, the rest of Chapter 7 and Chapter 8 against `f093a8887`; all tests pass at the new pin.
 
 Build Aura with an explicit build type. Aura's CMake does not set a default, so a plain `cmake -B build` gives an unoptimized binary that runs these drivers 3–5× slower.
 
@@ -57,6 +58,7 @@ scripts/run_chapter.sh 9                # 1000-state walk: aggregation, n-step T
 scripts/run_chapter.sh 10               # mountain car Sarsa / n-step / n × α sweep, access control (about 8 min, release build)
 scripts/run_chapter.sh 11               # Baird's counterexample: semi-gradient TD / DP, TDC, emphatic TD (about 3 s)
 scripts/run_chapter.sh 12               # λ-return, TD(λ), true online TD(λ); Sarsa(λ) on mountain car (about 11 min, release build)
+scripts/run_chapter.sh 13               # short corridor: REINFORCE, with baseline, one-step actor-critic (about 4 min, release build)
 scripts/run_tests.sh                    # oracle checks against published values
 ```
 
@@ -144,7 +146,9 @@ because the Soft interpreter takes about 1.5 ms per blackjack episode and file m
 | Fig 10.2, 1 run × 100 episodes | steps at episodes 1 / 10 / 50, mean of episodes 91–100: α = 0.1/8 3 531 / 670 / 364, 232; α = 0.2/8 1 884 / 495 / 251, 163; α = 0.5/8 2 379 / 239 / 163, 142 | α = 0.5/8 learns fastest; ≈ 150–200 steps after 100 episodes | |
 | Fig 10.3, 1 run × 100 episodes | mean steps, episodes 1–50 / 51–100: n = 1 (α = 0.5/8) 281 / 154, n = 8 (α = 0.3/8) 250 / 128 | n = 8 better | 49 s |
 
-Tests (`scripts/run_tests.sh`): 148 checks in 11 files, all pass at `5cc915687` in 3 min 11 s with a RelWithDebInfo build (Ch9: 24 checks in 34 s; Ch10: 17 checks in 14 s).
+**Chapter 13 (short corridor, 20 runs × 1000 episodes, `3034d4723`)**: mean reward over episodes 501–1000 is −11.9 / −13.0 / −16.8 for REINFORCE at α = 2^-12 / 2^-13 / 2^-14, −11.8 with baseline (−13.1 already in episodes 51–100) and −12.1 for one-step actor-critic (−11.9 in episodes 51–100); v* = −11.66. Full table in `chapters/ch13_policy_gradient/README.md`. 247 s.
+
+Tests (`scripts/run_tests.sh`): 239 checks in 16 files, all pass at `3034d4723` with a RelWithDebInfo build in about 7 min (Ch12: 15 checks in 95 s; Ch13: 31 checks in 22 s).
 
 ## Layout / 目录
 
@@ -152,13 +156,16 @@ Tests (`scripts/run_tests.sh`): 148 checks in 11 files, all pass at `5cc915687` 
 lib/rl/       rng (Park–Miller LCG, Box–Muller), vec helpers, tuple (cons-built lists), check (test oracle)
 lib/rl/       (also) knobs: RL_* run-size knobs from the environment
 lib/envs/     gridworld, blackjack, cliffwalking, random-walk, windy, maze (Dyna / blocking / shortcut),
-              walk1000 (Example 9.1), mountain-car (Example 10.1)
+              walk1000 (Example 9.1), mountain-car (Example 10.1), baird (Example 11.1),
+              short-corridor (Example 13.1)
 lib/algos/    bandit (Ch2), dp (Ch3–4), mc (Ch5: MC prediction, MC ES, ε-soft, off-policy IS),
               td (Ch6: TD(0), Sarsa, Q-learning, Expected Sarsa, Double Q-learning),
               td-batch (Fig 6.2 batch TD / MC), nstep (Ch7: n-step TD, Sarsa, Expected Sarsa, Tree Backup,
               off-policy IS n-step Sarsa, Q(σ)), dyna (Ch8: Dyna-Q, Dyna-Q+),
               approx (Ch9: tile coder, gradient MC, semi-gradient n-step TD, coarse coding),
-              semigrad-sarsa (Ch10: mountain-car tile coder, semi-gradient n-step Sarsa)
+              semigrad-sarsa (Ch10: mountain-car tile coder, semi-gradient n-step Sarsa),
+              basis (Ch9 polynomial / Fourier), diff-sarsa (Ch10 access control), offpolicy-approx (Ch11),
+              traces / sarsa-lambda (Ch12), policy-gradient (Ch13: REINFORCE, with baseline, actor-critic)
 lib/oracle/   exact blackjack v_π and π_* tables (tests/oracle/blackjack_exact.py), exact v_π of the
               1000-state walk (tests/oracle/walk1000_exact.py)
 chapters/     one directory per chapter: experiment drivers (*.aura) + README.md
@@ -174,6 +181,8 @@ scripts/      env.sh, run_chapter.sh, run_tests.sh
 - Lists are reversed with `tup-reverse` (cons-built), not `reverse`, which has the same reserve pattern as `list`.
 - Every division whose denominator can be zero is guarded: `/` by a non-literal zero silently returns `0`.
 - Numbers never come from strings or booleans inside arithmetic: `(* 1.0 "0.95")` is `0` and `(+ 1 #f)` is `1`, so knobs go through `string->number` and numeric tables start at `0.0`, never `#f`.
+- Step sizes such as 2^-13 are written as literals: `expt` with a negative exponent never returns ([#4458](https://github.com/cybrid-systems/aura/issues/4458)).
+- Results are printed through `round-to` / `number->string`, never `display` of a raw float or vector: `display` keeps 6 significant digits and shows a vector as `<vector[N]>` ([#4468](https://github.com/cybrid-systems/aura/issues/4468)). `equal?` stands in for `eqv?`, which is unbound ([#4470](https://github.com/cybrid-systems/aura/issues/4470)).
 - Integer arithmetic stays far below 2^62 (the Park–Miller LCG keeps products below 2^46): results in [2^62, 2^63) abort the process.
 - Run sizes are modest because file mode never frees closures; long runs grow by a few KB per episode. Per-step helpers recurse through top-level procedures instead of named `let`, which allocates a closure per entry.
 - Test helpers never pass a value that may be a primitive error into a user procedure: an error passed to or returned from a user procedure at top level skips the rest of the file with exit status 0 ([#4465](https://github.com/cybrid-systems/aura/issues/4465)).
