@@ -14,7 +14,7 @@
 ; the mean final pi(right). The book averages 100 runs of 1000 episodes.
 ;
 ; Knobs: RL_RUNS (default 20; book 100), RL_EPISODES (1000), RL_SEED.
-; Step sizes are literals: (expt 2.0 -9) does not terminate (cybrid-systems/aura#4458).
+; Step sizes are (expt 2.0 k) (negative exponents terminate since aura#4458).
 
 (require "rl/rng" all:)
 (require "rl/vec" all:)
@@ -28,11 +28,11 @@
 
 ; (method alpha_theta alpha_w label); method 0 REINFORCE, 1 with baseline, 2 actor-critic
 (define cfgs
-  (vector (vector 0 0.000244140625 0.0 "REINFORCE  a=2^-12        ")
-          (vector 0 0.0001220703125 0.0 "REINFORCE  a=2^-13        ")
-          (vector 0 0.00006103515625 0.0 "REINFORCE  a=2^-14        ")
-          (vector 1 0.001953125 0.015625 "+baseline  a=2^-9 aw=2^-6 ")
-          (vector 2 0.015625 0.0625 "actor-crit a=2^-6 aw=2^-4 ")))
+  (vector (vector 0 (expt 2.0 -12) 0.0 "REINFORCE  a=2^-12        ")
+          (vector 0 (expt 2.0 -13) 0.0 "REINFORCE  a=2^-13        ")
+          (vector 0 (expt 2.0 -14) 0.0 "REINFORCE  a=2^-14        ")
+          (vector 1 (expt 2.0 -9) (expt 2.0 -6) "+baseline  a=2^-9 aw=2^-6 ")
+          (vector 2 (expt 2.0 -6) (expt 2.0 -4) "actor-crit a=2^-6 aw=2^-4 ")))
 (define nC (vector-length cfgs))
 
 ; block edges (episode index, exclusive end)

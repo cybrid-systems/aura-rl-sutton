@@ -16,7 +16,7 @@
 ; trajectories from state 0 and update each pair visited. The value of the start
 ; state under the greedy policy (first maximal action) is computed by in-place
 ; iterative policy evaluation (to 1e-4), not by Monte Carlo.
-; Loops are top-level recursion (named let entries are never reclaimed, aura#4459).
+; Loops are top-level recursion.
 
 (require "rl/rng" all:)
 (require "rl/vec" all:)
@@ -116,7 +116,7 @@
   (let ((q (make-vector (* 2 (vector-ref task 0)) 0.0))
         (v (make-vector (vector-ref task 0) 0.0))
         (out (make-vector (+ 1 (quotient updates every)) 0.0)))
-    (ts-loop! task (equal? method 'uniform) q v out 0 updates every 0)
+    (ts-loop! task (eq? method 'uniform) q v out 0 updates every 0)
     out))
 (define (ts-loop! task uniform? q v out i updates every s)
   (if (= (modulo i every) 0) (vector-set! out (quotient i every) (ts-eval task q v)) #f)

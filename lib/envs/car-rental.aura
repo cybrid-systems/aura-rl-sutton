@@ -12,7 +12,7 @@
 ;   E[n1,n2] = R1[n1] + R2[n2] + γ Σ_{n1'} T1[n1][n1'] Σ_{n2'} T2[n2][n2'] V[n1'][n2']
 ; Each synchronous evaluation sweep fills W = V·T2ᵀ and then E (2 × 21³ products),
 ; instead of 441 × 26² terms per state for the plain sum over requests and returns.
-; Loops are top-level recursion (named let entries are never reclaimed, aura#4459).
+; Loops are top-level recursion (from before aura#4459 was fixed; kept as is).
 
 (require "rl/vec" all:)
 

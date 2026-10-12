@@ -1,8 +1,8 @@
 ; rl/vec.aura — small float-vector helpers (no vector-map / vector-fill! in Aura std yet).
 ;
 ; Loops are written as (if c (begin ... (lp ...)) #f) rather than (when c ...):
-; on this Aura tip a self tail call inside when/unless/and/or is not eliminated
-; and overflows the C stack after ~700 iterations (cybrid-systems/aura#4454).
+; before cybrid-systems/aura#4454 was fixed (695c58f5d) a self tail call inside
+; when/unless/and/or overflowed the C stack. Both forms are fine now.
 
 (require "rl/rng" all:)
 

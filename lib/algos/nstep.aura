@@ -34,7 +34,7 @@
 (define (ns-pow g k) (if (= k 0) 1.0 (* g (ns-pow g (- k 1)))))
 
 ; Σ_{i=lo}^{hi} γ^(i−lo) R_i over the ring buffer (top-level recursion, not a
-; named let: named-let entries are never reclaimed in file mode, aura#4459).
+; named let; from before aura#4459 was fixed).
 (define (ns-rsum R m i hi gamma w acc)
   (if (<= i hi) (ns-rsum R m (+ i 1) hi gamma (* w gamma) (+ acc (* w (ring-ref R m i)))) acc))
 
@@ -126,7 +126,7 @@
     (if (or (< T 0) (< (+ tau n) T))
         (let ((sn (ring-ref S m (+ tau n))))
           (+ g (* (ns-pow gamma n)
-                  (if (equal? method 'sarsa)
+                  (if (eq? method 'sarsa)
                       (q-get q nA sn (ring-ref A m (+ tau n)))
                       (ns-v-eps q nA sn eps)))))
         g)))
@@ -154,7 +154,7 @@
              (total2 (if stepped (+ total (cadr res)) total))
              (tau (- (+ t 1) n)))
         (if (>= tau 0)
-            (let* ((g (if (equal? method 'tree)
+            (let* ((g (if (eq? method 'tree)
                           (ns-tree-return q nA S A R m tau t T2 gamma)
                           (ns-sarsa-return method q nA S A R m tau n T2 eps gamma)))
                    (i (+ (* (ring-ref S m tau) nA) (ring-ref A m tau))))
@@ -253,7 +253,7 @@
     (ring-set! SG m 0 (ns-pick-sigma sigma))
     (ns-off-loop method q step nA n m S A B SG R epsb epst sigma alpha gamma 0 -1 0.0)))
 
-; top-level recursion (named-let entries are never reclaimed, aura#4459)
+; top-level recursion (from before aura#4459 was fixed)
 (define (ns-off-loop method q step nA n m S A B SG R epsb epst sigma alpha gamma t T total)
   (let* ((stepped (< T 0))
          (res (if stepped (step (ring-ref S m t) (ring-ref A m t)) #f))
@@ -274,7 +274,7 @@
     (if (>= tau 0)
         (let* ((i (+ (* (ring-ref S m tau) nA) (ring-ref A m tau)))
                (qi (vector-ref q i)))
-          (if (equal? method 'is)
+          (if (eq? method 'is)
               (let* ((hi (if (< T2 0) (+ tau n) (min (+ tau n) (- T2 1))))
                      (rho (ns-rho B m (+ tau 1) hi 1.0))
                      (g (ns-sarsa-return 'sarsa q nA S A R m tau n T2 epsb gamma)))

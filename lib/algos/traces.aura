@@ -15,8 +15,7 @@
 ;
 ; The walk does not depend on the estimates, so each run's episodes are generated
 ; once into a buffer and every (method, lambda, alpha) configuration replays the
-; same episodes (common random numbers). Loops are top-level recursion
-; (cybrid-systems/aura#4459, #4454).
+; same episodes (common random numbers). Loops are top-level recursion.
 
 (require "rl/rng" all:)
 

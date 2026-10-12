@@ -49,7 +49,7 @@
 
 ; Summed increment for state s (before scaling by α).
 (define (b-inc method v n s cl cr nv sg)
-  (if (equal? method 'td)
+  (if (eq? method 'td)
       (+ (* (vector-ref cl s) (- (+ (b-rew n (- s 1)) (b-next v n (- s 1))) (vector-ref v s)))
          (* (vector-ref cr s) (- (+ (b-rew n (+ s 1)) (b-next v n (+ s 1))) (vector-ref v s))))
       (- (vector-ref sg s) (* (vector-ref nv s) (vector-ref v s)))))

@@ -56,18 +56,16 @@
           (let ((acc2 (+ acc (vector-ref probs i))))
             (if (< u acc2) i (lp (+ i 1) acc2)))))))
 
-; Method tags are compared with equal?, not eq?: on this Aura tip a quoted
-; symbol is a string-heap value, and a later string literal with the same text
-; (e.g. a label "ucb") re-points (quote ucb), so eq? dispatch silently fails
-; (cybrid-systems/aura#4455).
+; Method tags are symbols compared with eq? (quote identity is stable since
+; cybrid-systems/aura#4455 was fixed; earlier pins needed equal? here).
 (define (select-action! cfg q-est counts prefs probs scratch k t)
   (let ((m (cfg-method cfg)))
     (cond
-      ((equal? m 'eps)
+      ((eq? m 'eps)
        (if (and (> (cfg-eps cfg) 0) (rng-bernoulli! (cfg-eps cfg)))
            (rng-int! k)
            (vec-argmax-tie! q-est)))
-      ((equal? m 'ucb)
+      ((eq? m 'ucb)
        (let lp ((a 0))
          (if (< a k) (begin
            (let ((n (vector-ref counts a)))
@@ -83,7 +81,7 @@
        (sample-index! probs)))))
 
 (define (update! cfg q-est counts prefs probs a reward baseline k)
-  (if (equal? (cfg-method cfg) 'gradient)
+  (if (eq? (cfg-method cfg) 'gradient)
       (let ((delta (- reward (if (cfg-baseline cfg) baseline 0.0)))
             (alpha (cfg-alpha cfg)))
         (let lp ((b 0))

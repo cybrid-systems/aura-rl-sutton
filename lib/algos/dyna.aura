@@ -24,7 +24,7 @@
 ; every n: with Q = 0 and zero rewards until the goal, the first episode is then
 ; identical for every number of planning steps (as in the book's Figure 8.2).
 ; Per-step helpers recurse through top-level procedures, not named let
-; (named-let entries are never reclaimed in file mode, aura#4459).
+; (from before aura#4459 was fixed; kept as is).
 
 (require "rl/rng" all:)
 (require "rl/vec" all:)

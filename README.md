@@ -28,7 +28,7 @@ Each `chapters/chNN_*/README.md` lists the algorithms and figures planned for th
 
 ## Aura version / 锁定的 Aura 版本
 
-Tested against Aura `main` at **`3034d4723`** (2026-10-12, fixes #4453), built with `-DCMAKE_BUILD_TYPE=RelWithDebInfo`. Chapter 13, Fig 2.6, the car rental and gambler's problems, prioritized sweeping and Figs 8.7–8.8 were written against it; Chapters 9–12 were written against `5cc915687`. Chapters 2–4 were first written against `549fdd3`, Chapters 5–6 against `2f815c188`, Chapter 7 (first part) against `2b36f9f7e`, the rest of Chapter 7 and Chapter 8 against `f093a8887`; all tests pass at the new pin.
+Tested against Aura `main` at **`b13af9334`** (2026-10-12, after the fixes for #4453–#4461), built with `-DCMAKE_BUILD_TYPE=RelWithDebInfo`; all 278 checks pass. Chapter 13, Fig 2.6, the car rental and gambler's problems, prioritized sweeping and Figs 8.7–8.8 were written against `3034d4723`; Chapters 9–12 against `5cc915687`. Chapters 2–4 were first written against `549fdd3`, Chapters 5–6 against `2f815c188`, Chapter 7 (first part) against `2b36f9f7e`, the rest of Chapter 7 and Chapter 8 against `f093a8887`. The fix status of every issue filed from this port is in [IMPROVEMENTS.md](IMPROVEMENTS.md#fix-status--修复状态).
 
 Build Aura with an explicit build type. Aura's CMake does not set a default, so a plain `cmake -B build` gives an unoptimized binary that runs these drivers 3–5× slower.
 
@@ -86,11 +86,11 @@ Chapter 2 defaults to 20 runs × 300 steps for Figs 2.2–2.5 and 10 runs × 100
 ## Results at the defaults / 默认参数下的结果
 
 Seed 2026, Soft face, aarch64 dev container. Chapter 5 and Ex 6.2/6.5–6.7 were measured at Aura `2f815c188`; Fig 6.2, Fig 6.3 and on-policy Chapter 7 at `2b36f9f7e`; off-policy Chapter 7 and Chapter 8 at `f093a8887`; Chapters 9–10 at `5cc915687`. Wall times for Chapters 2–8 come from an unoptimized Aura build (no `CMAKE_BUILD_TYPE`); Chapters 9–10 use a RelWithDebInfo build, which is 3–5× faster. Run sizes are smaller than the book's
-because the Soft interpreter takes about 1.5 ms per blackjack episode and file mode never frees closures
-(memory grows with the run, [#4459](https://github.com/cybrid-systems/aura/issues/4459)). Every driver has
+because the Soft interpreter takes about 1.5 ms per blackjack episode (when these were measured, file mode also never freed closures,
+[#4459](https://github.com/cybrid-systems/aura/issues/4459), fixed at `dc88d4a66`). Every driver has
 `RL_*` knobs to raise them.
 
-种子 2026，Soft 模式。运行规模比书中小（解释器速度 + 文件模式不回收闭包，见 #4459），可用 `RL_*` 环境变量调大。
+种子 2026，Soft 模式。运行规模比书中小（解释器速度；当时文件模式还不回收闭包，#4459 已在 `dc88d4a66` 修复），可用 `RL_*` 环境变量调大。
 
 **Chapter 5 (blackjack; exact values from `lib/oracle`, a DP over the same rules)**
 
@@ -159,7 +159,7 @@ because the Soft interpreter takes about 1.5 ms per blackjack episode and file m
 
 **Chapter 13 (short corridor, 20 runs × 1000 episodes, `3034d4723`)**: mean reward over episodes 501–1000 is −11.9 / −13.0 / −16.8 for REINFORCE at α = 2^-12 / 2^-13 / 2^-14, −11.8 with baseline (−13.1 already in episodes 51–100) and −12.1 for one-step actor-critic (−11.9 in episodes 51–100); v* = −11.66. Full table in `chapters/ch13_policy_gradient/README.md`. 247 s.
 
-Tests (`scripts/run_tests.sh`): 278 checks in 18 files, all pass at `3034d4723` with a RelWithDebInfo build in about 6 min (Ch12: 15 checks in 95 s; Ch13: 31 checks in 22 s).
+Tests (`scripts/run_tests.sh`): 278 checks in 18 files, all pass at `b13af9334` with a RelWithDebInfo build in about 8 min serially (at `3034d4723`: about 6 min). Ch12 takes 206–211 s, up from 75–95 s: the file-mode reclaim added for #4459 marks the live heap every 128 allocations ([#4474](https://github.com/cybrid-systems/aura/issues/4474)). Ch13: 31 checks in 23 s.
 
 ## Coverage / 覆盖范围
 
@@ -195,19 +195,20 @@ scripts/      env.sh, run_chapter.sh, run_tests.sh
 
 ## Aura workarounds in this code / 代码中的 Aura 规避写法
 
-- Small lists in hot paths are built with `cons` (`lib/rl/tuple.aura`), not `list`: each `list` call costs memory proportional to the whole pair heap.
-- Loops use `(if c (begin … (loop …)) #f)` rather than `when` / `unless` / `and` / `or`: a tail call in those forms is not eliminated and overflows the C stack after about 700 iterations.
-- Symbol tags are compared with `equal?`, not `eq?`: a string literal with the same text re-points `(quote sym)`.
-- Lists are reversed with `tup-reverse` (cons-built), not `reverse`, which has the same reserve pattern as `list`.
-- Every division whose denominator can be zero is guarded: `/` by a non-literal zero silently returns `0`.
-- Numbers never come from strings or booleans inside arithmetic: `(* 1.0 "0.95")` is `0` and `(+ 1 #f)` is `1`, so knobs go through `string->number` and numeric tables start at `0.0`, never `#f`.
-- Step sizes such as 2^-13 are written as literals: `expt` with a negative exponent never returns ([#4458](https://github.com/cybrid-systems/aura/issues/4458)).
+Status at `b13af9334`. Fixed upstream and removed here: symbol tags are compared with `eq?` again (#4455), step sizes 2^-k are written `(expt 2.0 -k)` again (#4458), the Fig 2.6 parameter grids use `list`.
+
+- Small lists in hot paths are still built with `cons` (`lib/rl/tuple.aura`, `tup-reverse`). The O(N²) cost of `list` (#4453) is fixed, but pairs built by `list` / `reverse` / `append` / `map` are not reused in file mode, while `cons` pairs are ([#4473](https://github.com/cybrid-systems/aura/issues/4473)).
+- Loops use `(if c (begin … (loop …)) #f)` and top-level recursion instead of named `let`. They were written that way for #4454 (tail call in `when` / `and`) and #4459 (named-let closures never freed); both are fixed, the code is kept as is.
+- Every division whose denominator can be zero is guarded. Since #4461 an integer `/` by a zero variable is an error (displayed `<unknown>`) and a float `/` by `0.0` is `inf`, so the guards are still what gives the right answer.
+- Numbers never come from strings or booleans inside arithmetic: `(+ 1 #t)` is `2` and `(+ 1 "12abc")` is `13` ([#4463](https://github.com/cybrid-systems/aura/issues/4463)), so knobs go through `string->number` and numeric tables start at `0.0`, never `#f`.
+- Vector indices go through `inexact->exact`: a float index is now an error value instead of SIGABRT (#4456), but it is still not a valid index.
 - Results are printed through `round-to` / `number->string`, never `display` of a raw float or vector: `display` keeps 6 significant digits and shows a vector as `<vector[N]>` ([#4468](https://github.com/cybrid-systems/aura/issues/4468)). `equal?` stands in for `eqv?`, which is unbound ([#4470](https://github.com/cybrid-systems/aura/issues/4470)).
-- Integer arithmetic stays far below 2^62 (the Park–Miller LCG keeps products below 2^46): results in [2^62, 2^63) abort the process.
-- Run sizes are modest because file mode never frees closures; long runs grow by a few KB per episode. Per-step helpers recurse through top-level procedures instead of named `let`, which allocates a closure per entry.
+- Integer arithmetic stays far below 2^62 (the Park–Miller LCG keeps products below 2^46): results in [2^62, 2^63) abort the process ([#4462](https://github.com/cybrid-systems/aura/issues/4462)).
+- No `while` with more than one body form ([#4466](https://github.com/cybrid-systems/aura/issues/4466)); calls are not arity-checked, so a wrong argument count is not caught ([#4467](https://github.com/cybrid-systems/aura/issues/4467)).
 - Test helpers never pass a value that may be a primitive error into a user procedure: an error passed to or returned from a user procedure at top level skips the rest of the file with exit status 0 ([#4465](https://github.com/cybrid-systems/aura/issues/4465)).
 - Per-step state lives in module-level vectors (`walk1000`, `mountain-car`) and episodes use ring buffers, so a step allocates no list. Every call costs time proportional to the number of globals ([#4464](https://github.com/cybrid-systems/aura/issues/4464)), so hot helpers stay few and flat.
-- `scripts/run_tests.sh` also fails a test file that prints no `PASS` line or a `load_module_file:` / `<error>` line: a failed `require` skips the rest of the file and exits 0.
+- Drivers run on the Soft face. The default face no longer runs top-level forms twice (#4457), but it still refuses named `let` / `random` (tree-walker fallback, #2213).
+- `scripts/run_tests.sh` fails a test file that exits non-zero, prints no `PASS` line, or prints `error:` / `<error>` / `load_module_file:`. A failed `require` now prints an error and exits 1 (#4460); the `<error>` check stays for #4465.
 
 Details and upstream issue links are in [IMPROVEMENTS.md](IMPROVEMENTS.md).
 

@@ -7,8 +7,7 @@
 ;   greedy, optimistic init, α = 0.1 Q1 ∈ 1/4 … 4
 ; Run r of every configuration uses the same seed (RL_SEED + r), so every point is
 ; measured on the same RL_RUNS testbeds (common random numbers).
-; Powers of two are written as literals: expt with a negative exponent never
-; returns on this Aura tip (cybrid-systems/aura#4458).
+; Powers of two come from (expt 2.0 k) (negative exponents work since aura#4458).
 ;
 ; Knobs: RL_RUNS (default 10; book 2000), RL_STEPS (default 1000), RL_SEED (2026).
 
@@ -41,18 +40,18 @@
 
 (sweep "eps-greedy (eps)"
        (lambda (x) (bandit-cfg (quote eps) x 0.0 0.0 0.0 #f 0.0 "eps"))
-       (cons 0.0078125 (cons 0.015625 (cons 0.03125 (cons 0.0625 (cons 0.125 (cons 0.25 (quote ())))))))
-       (cons "1/128" (cons "1/64" (cons "1/32" (cons "1/16" (cons "1/8" (cons "1/4" (quote ()))))))))
+       (list (expt 2.0 -7) (expt 2.0 -6) (expt 2.0 -5) (expt 2.0 -4) (expt 2.0 -3) (expt 2.0 -2))
+       (list "1/128" "1/64" "1/32" "1/16" "1/8" "1/4"))
 (sweep "gradient+baseline (alpha)"
        (lambda (x) (bandit-cfg (quote gradient) 0.0 x 0.0 0.0 #t 0.0 "grad"))
-       (cons 0.03125 (cons 0.0625 (cons 0.125 (cons 0.25 (cons 0.5 (cons 1.0 (cons 2.0 (cons 4.0 (quote ())))))))))
-       (cons "1/32" (cons "1/16" (cons "1/8" (cons "1/4" (cons "1/2" (cons "1" (cons "2" (cons "4" (quote ()))))))))))
+       (list (expt 2.0 -5) (expt 2.0 -4) (expt 2.0 -3) (expt 2.0 -2) (expt 2.0 -1) (expt 2.0 0) (expt 2.0 1) (expt 2.0 2))
+       (list "1/32" "1/16" "1/8" "1/4" "1/2" "1" "2" "4"))
 (sweep "UCB (c)"
        (lambda (x) (bandit-cfg (quote ucb) 0.0 0.0 0.0 x #f 0.0 "ucb"))
-       (cons 0.0625 (cons 0.125 (cons 0.25 (cons 0.5 (cons 1.0 (cons 2.0 (cons 4.0 (quote ()))))))))
-       (cons "1/16" (cons "1/8" (cons "1/4" (cons "1/2" (cons "1" (cons "2" (cons "4" (quote ())))))))))
+       (list (expt 2.0 -4) (expt 2.0 -3) (expt 2.0 -2) (expt 2.0 -1) (expt 2.0 0) (expt 2.0 1) (expt 2.0 2))
+       (list "1/16" "1/8" "1/4" "1/2" "1" "2" "4"))
 (sweep "optimistic greedy a=0.1 (Q1)"
        (lambda (x) (bandit-cfg (quote eps) 0.0 0.1 x 0.0 #f 0.0 "opt"))
-       (cons 0.25 (cons 0.5 (cons 1.0 (cons 2.0 (cons 4.0 (quote ()))))))
-       (cons "1/4" (cons "1/2" (cons "1" (cons "2" (cons "4" (quote ())))))))
+       (list (expt 2.0 -2) (expt 2.0 -1) (expt 2.0 0) (expt 2.0 1) (expt 2.0 2))
+       (list "1/4" "1/2" "1" "2" "4"))
 (display "done") (newline)

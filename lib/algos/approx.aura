@@ -7,9 +7,8 @@
 ; with error delta adds alpha*delta/K to each active tile (the gradient of v
 ; is the binary feature vector; dividing by K keeps alpha comparable across K).
 ;
-; Loops are top-level recursive procedures, not named let: every named-let
-; entry allocates a closure that file mode never frees (cybrid-systems/aura#4459).
-; Loops avoid when/unless/and/or around tail calls (#4454).
+; Loops are top-level recursive procedures, not named let, and use if/begin
+; rather than when (written before aura#4459 / #4454 were fixed; kept as is).
 
 (require "rl/rng" all:)
 (require "rl/vec" all:)

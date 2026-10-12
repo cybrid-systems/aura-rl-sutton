@@ -16,7 +16,7 @@
 (export mc-act-index mc-index-act mc-bj-predict! mc-bj-es! mc-bj-eps-soft!
         mc-bj-q->policy mc-bj-off-policy! mc-bj-mean-return! mc-inf-var!)
 
-(define (mc-act-index a) (if (equal? a 'hit) 1 0))
+(define (mc-act-index a) (if (eq? a 'hit) 1 0))
 (define (mc-index-act i) (if (= i 1) 'hit 'stick))
 
 (define (step-state st) (bj-state-index (car st) (cadr st) (car (cddr st))))
@@ -170,7 +170,7 @@
     (if (null? t)
         r
         (let ((st (car t)))
-          (if (equal? (cadr (cddr st)) (target-act (car st)))
+          (if (eq? (cadr (cddr st)) (target-act (car st)))
               (lp (cdr t) (* 2.0 r))
               0.0)))))
 

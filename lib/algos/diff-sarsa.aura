@@ -10,7 +10,7 @@
 ; The state (free servers 0..10, priority index 0..3) is one-hot coded, so the
 ; linear q(s, a) is a table: q[(k*4 + i)*2 + a], a = 0 reject, 1 accept.
 ;   delta = R - Rbar + q(S', A') - q(S, A);  Rbar += beta delta;  q(S, A) += alpha delta
-; Per-step helpers are top-level recursion (no named let, cybrid-systems/aura#4459).
+; Per-step helpers are top-level recursion (no named let).
 
 (require "rl/rng" all:)
 

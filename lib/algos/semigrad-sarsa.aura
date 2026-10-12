@@ -10,7 +10,7 @@
 ; units means 0.5/8 per tile). Actions are greedy (epsilon = 0) with random ties;
 ; initial weights 0 are optimistic because every reward is -1.
 ;
-; Per-step helpers are top-level recursion (no named let, cybrid-systems/aura#4459)
+; Per-step helpers are top-level recursion (no named let)
 ; and the episode keeps (n+1)-slot ring buffers of active tiles and actions.
 
 (require "rl/rng" all:)

@@ -1,6 +1,6 @@
 # aura-rl-sutton state (machine-readable, key=value)
 aura_repo=https://github.com/cybrid-systems/aura
-aura_tip=3034d4723  # fixes #4453; ch13 + gap fill (fig 2.6, ch4 car rental / gambler, ch8 prioritized sweeping / fig 8.7 / 8.8) written here (278 checks pass)
+aura_tip=b13af9334  # re-pinned 2026-10-12 after fixes for #4453-#4461; 278 checks pass (RelWithDebInfo, Soft)
 aura_build=RelWithDebInfo  # no CMAKE_BUILD_TYPE = unoptimized, 3-5x slower
 aura_face=soft  # AURA_SANDBOX=off AURA_PIPELINE_STRICT=0
 reference=https://github.com/ShangtongZhang/reinforcement-learning-an-introduction (read-only cross-check)
@@ -19,5 +19,7 @@ ch12_eligibility_traces=done  # 19-state walk: Fig 12.3 offline lambda-return, F
 ch13_policy_gradient=done   # short corridor: Fig 13.1 REINFORCE alpha sweep, Fig 13.2 REINFORCE with baseline, one-step actor-critic (tabular critic); python oracle
 
 tests=tests/test_envs.aura tests/test_ch02_bandits.aura tests/test_ch03_ch04_dp.aura tests/test_ch04_dp_examples.aura tests/test_ch05_mc.aura tests/test_ch06_td.aura tests/test_ch06_batch_sweep.aura tests/test_ch07_nstep.aura tests/test_ch07_offpolicy.aura tests/test_ch08_dyna.aura tests/test_ch08_planning.aura tests/test_ch09_approx.aura tests/test_ch09_basis.aura tests/test_ch10_mountain_car.aura tests/test_ch10_access_control.aura tests/test_ch11_baird.aura tests/test_ch12_traces.aura tests/test_ch13_policy_gradient.aura  # 278 checks
-next=book core of ch2-13 complete vs the reference repo; optional: ch1 tic-tac-toe, larger run sizes, re-pin to a newer Aura main
-aura_issues_filed=4453,4454,4455,4456,4457,4458,4459,4460,4461,4462,4463,4464,4465,4466,4467,4468,4469,4470,4471,4472
+next=book core of ch2-13 complete vs the reference repo; optional: ch1 tic-tac-toe, larger run sizes, re-pin again when #4473/#4474 land
+aura_issues_filed=4453,4454,4455,4456,4457,4458,4459,4460,4461,4462,4463,4464,4465,4466,4467,4468,4469,4470,4471,4472,4473,4474
+aura_issues_fixed=4453,4454,4455,4456,4457,4458,4459,4460,4461  # verified on b13af9334
+aura_issues_open=4462,4463,4464,4465,4466,4467,4468,4469,4470,4471,4472,4473,4474  # 4462 partial (literal fold fixed, abort remains)

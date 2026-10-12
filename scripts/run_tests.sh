@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Run tests/*.aura (or the files given as arguments). A file fails if it prints a
-# FAIL line, crashes, exits non-zero, prints no PASS line, or a require failed
-# (Aura prints `load_module_file:` / `<error>` and exits 0: cybrid-systems/aura#4460).
+# FAIL line, crashes, exits non-zero, prints no PASS line, or prints an error.
+# A failed require exits 1 since aura#4460 was fixed; `<error>` is still checked
+# because an error through a user procedure skips the rest and exits 0 (aura#4465).
 set -uo pipefail
 source "$(dirname "$0")/env.sh"
 status=0

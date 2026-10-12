@@ -7,7 +7,7 @@
 ; state has x = e_6 + 2 e_7. All true values are 0.
 ;
 ; Feature vectors are never materialised: bd-v computes w . x(s) and bd-add!
-; adds c x(s) to a weight vector (no per-step allocation, cybrid-systems/aura#4459).
+; adds c x(s) to a weight vector (no per-step allocation).
 
 (require "rl/rng" all:)
 

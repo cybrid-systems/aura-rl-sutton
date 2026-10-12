@@ -17,7 +17,7 @@
 ;     theta += alpha delta grad ln pi(A | S)
 ;
 ; G_t = -(T - t) since every reward is -1. State is module-level vectors and the
-; loops are top-level recursion (cybrid-systems/aura#4459, #4454).
+; loops are top-level recursion.
 
 (require "rl/rng" all:)
 (require "envs/short-corridor" all:)

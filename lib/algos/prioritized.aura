@@ -11,7 +11,7 @@
 ; (S,A) holds in the queue (0 = not queued); an insert with a lower priority than
 ; the one queued is dropped (only the higher entry is retained), a higher one is
 ; pushed and makes the old heap entry stale; pop skips stale entries.
-; Loops are top-level recursion (named let entries are never reclaimed, aura#4459).
+; Loops are top-level recursion.
 
 (require "rl/rng" all:)
 (require "rl/vec" all:)

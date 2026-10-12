@@ -2,8 +2,8 @@
 ; Non-terminal states 1..1000, start at 500. Each step jumps uniformly 1..100
 ; states left or right; a jump past either end terminates (left pays -1, right
 ; +1, every other reward is 0). States are plain integers, terminals 0 and 1001,
-; so a step allocates nothing (closures and conses are never freed in file mode,
-; cybrid-systems/aura#4459).
+; so a step allocates nothing (written before file mode reclaimed closures,
+; cybrid-systems/aura#4459, fixed at 695c58f5d; kept: no garbage per step).
 
 (require "rl/rng" all:)
 

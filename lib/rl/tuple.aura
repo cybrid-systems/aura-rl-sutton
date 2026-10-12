@@ -1,9 +1,9 @@
 ; rl/tuple.aura — fixed-arity list constructors built from cons.
 ;
-; Workaround: the `list` primitive reserves pairs_ to exactly size+n on every
-; call (pmr vector on a monotonic arena), so N calls cost O(N^2) memory/time
-; (cybrid-systems/aura#4453).
-; Hot paths here build small lists with cons instead. See IMPROVEMENTS.md.
+; The O(N^2) growth of `list` (cybrid-systems/aura#4453) is fixed at 695c58f5d,
+; but pairs built by `list` / `reverse` are still not reclaimed in file mode
+; (800 000 four-element lists: list 233 MB peak, cons 93 MB), while cons pairs
+; are. Hot paths keep building small lists with cons. See IMPROVEMENTS.md.
 
 (export tup2 tup3 tup4 tup-reverse)
 

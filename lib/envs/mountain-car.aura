@@ -4,7 +4,7 @@
 ; Actions 0 / 1 / 2 are full reverse / zero / full forward throttle (a = -1, 0, +1).
 ; Reward -1 per step; the episode ends when p' reaches 0.5. Start p ~ U[-0.6, -0.4), v = 0.
 ; The state lives in a module-level vector so a step allocates no list
-; (closures / conses are never freed in file mode, cybrid-systems/aura#4459).
+; (written before file mode reclaimed closures, aura#4459; kept: no garbage per step).
 
 (require "rl/rng" all:)
 

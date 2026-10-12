@@ -37,7 +37,7 @@
            (s2 (car st))
            (r (cadr st))
            (done (car (cddr st))))
-      (if (equal? method 'td)
+      (if (eq? method 'td)
           (let ((target (+ r (if done 0.0 (vector-ref v s2)))))
             (vec-add-at! v s (* alpha (- target (vector-ref v s))))
             (if done #t (lp s2 '())))
@@ -84,8 +84,8 @@
 (define (q-get q nA s a) (vector-ref q (+ (* s nA) a)))
 
 ; The helpers below recurse through top-level procedures instead of named
-; `let`: in file mode every named-let entry allocates a closure that is never
-; reclaimed (cybrid-systems/aura#4459), and these run several times per step.
+; `let`. Written when file mode never reclaimed named-let closures
+; (cybrid-systems/aura#4459, fixed at 695c58f5d); kept as is.
 
 (define (q-max-from q base nA a m)
   (if (< a nA) (q-max-from q base nA (+ a 1) (max m (vector-ref q (+ base a)))) m))
@@ -134,9 +134,9 @@
            (a2 (if done 0 (q-eps-greedy! q nA s2 eps)))
            (next (if done
                      0.0
-                     (if (equal? method 'sarsa)
+                     (if (eq? method 'sarsa)
                          (q-get q nA s2 a2)
-                         (if (equal? method 'q)
+                         (if (eq? method 'q)
                              (q-max q nA s2)
                              ; expectation under the ε-greedy policy
                              (+ (* (- 1.0 eps) (q-max q nA s2))
