@@ -1,15 +1,15 @@
 # Aura findings from the RL port / 移植中发现的 Aura 问题
 
-Aura tip: `b13af9334` (#4453–#4458 first seen at `549fdd3`, #4459–#4461 at `2f815c188`, #4462 at `2b36f9f7e`, #4463 at `f093a8887`, #4464–#4467 at `5cc915687`, #4468–#4472 at `3034d4723`, #4473–#4474 at `b13af9334`). Each bug has a minimal repro and an upstream issue. #4453–#4461 are fixed at `b13af9334`; #4462–#4472 are still open (see the fix status table).
+Aura tip: `9058d36c4` (#4453–#4458 first seen at `549fdd3`, #4459–#4461 at `2f815c188`, #4462 at `2b36f9f7e`, #4463 at `f093a8887`, #4464–#4467 at `5cc915687`, #4468–#4472 at `3034d4723`, #4473–#4474 at `b13af9334`). Each bug has a minimal repro and an upstream issue. All of #4453–#4474 are closed upstream and verified on `9058d36c4` (see the fix status table).
 Soft = `AURA_SANDBOX=off AURA_PIPELINE_STRICT=0`; default = no env vars (Restricted + strict pipeline).
 
 ## Fix status / 修复状态
 
-Re-checked on `b13af9334` (RelWithDebInfo, Soft face unless noted) with the minimal repro of each issue. Issue state from the GitHub API on 2026-10-12.
+Re-checked on `9058d36c4` (RelWithDebInfo, Soft face unless noted) with the minimal repro of each issue. Issue state from the GitHub API on 2026-10-12.
 
-| Issue | Upstream | Repro on `b13af9334` | Status | Change here |
+| Issue | Upstream | Repro on `9058d36c4` | Status | Change here |
 |---|---|---|---|---|
-| [#4453](https://github.com/cybrid-systems/aura/issues/4453) `list` O(N²) | closed, `3034d4723` | 20 000 `(list 1 i)`: 94 MB peak (was 1.58 GB) | FIXED | cons helpers kept: `list` pairs are not reused ([#4473](https://github.com/cybrid-systems/aura/issues/4473)) |
+| [#4453](https://github.com/cybrid-systems/aura/issues/4453) `list` O(N²) | closed, `3034d4723` | 20 000 `(list 1 i)`: 94 MB peak (was 1.58 GB) | FIXED | cons helpers removed at `9058d36c4` (#4473 fixed too) |
 | [#4454](https://github.com/cybrid-systems/aura/issues/4454) tail call in `when`/`and`, depth guard | closed, `8cd448f28` | 100 000-step `when` / `and` loops run; non-tail depth 100 000 returns | FIXED | comments only; `if`/`begin` loops kept |
 | [#4455](https://github.com/cybrid-systems/aura/issues/4455) `eq?` on quoted symbol | closed, `d74758082` | `(eq? s 'ucb)` stays `#t` after a `"ucb"` literal | FIXED | `equal?` → `eq?` for symbol tags (15 sites) |
 | [#4456](https://github.com/cybrid-systems/aura/issues/4456) `vector-ref` float index SIGABRT | closed, `074fd9c5e` | `(vector-ref v 1.0)` → error value, program continues | FIXED | `inexact->exact` kept (float index still invalid) |
@@ -18,19 +18,19 @@ Re-checked on `b13af9334` (RelWithDebInfo, Soft face unless noted) with the mini
 | [#4459](https://github.com/cybrid-systems/aura/issues/4459) file mode never frees closures | closed, `dc88d4a66` | 300 000 closures: 98 MB peak, flat; named-let helper loop flat | FIXED, slower ([#4474](https://github.com/cybrid-systems/aura/issues/4474)) | comments only; no run-size change |
 | [#4460](https://github.com/cybrid-systems/aura/issues/4460) failed `require` exits 0 | closed, `695c58f5d` | error on stderr, later forms run, exit 1 | FIXED | `run_tests.sh` comment; checks kept |
 | [#4461](https://github.com/cybrid-systems/aura/issues/4461) `/` by variable zero → `0` | closed, `b13af9334` | `(/ 1 z)` → error like `(/ 1 0)`; `(/ 1.0 zf)` → `inf` | FIXED | zero guards kept (needed for the right value) |
-| [#4462](https://github.com/cybrid-systems/aura/issues/4462) ints in [2^62, 2^63) | open | `(+ c c 2)` with c = 2^61−1 still SIGABRT; literal `(* 2^32 2^32)` now folds to `1.84467e+19` like the variable form | PARTIAL (abort remains) | LCG stays below 2^46 |
-| [#4463](https://github.com/cybrid-systems/aura/issues/4463) arithmetic coerces non-numbers | open | `(+ 1 #t)` → 2, `(+ 1 "12abc")` → 13; `(* 1.0 "2.5")` now 2.5 (was 2) | STILL OPEN | kept |
-| [#4464](https://github.com/cybrid-systems/aura/issues/4464) per-call cost ∝ globals | open | `spin 10000` net 82 / 142 / 317 ms at 0 / 200 / 800 filler defines | STILL OPEN | kept |
-| [#4465](https://github.com/cybrid-systems/aura/issues/4465) error through user procedure skips rest, exit 0 | open | `(id (car '()))` → `<error>`, later forms skipped, exit 0 | STILL OPEN | kept |
-| [#4466](https://github.com/cybrid-systems/aura/issues/4466) `while` runs only first body | open | `(while (< i 5) (set! s …) (set! i …))` loops forever | STILL OPEN | kept |
-| [#4467](https://github.com/cybrid-systems/aura/issues/4467) no arity check | open | `(g 1 2 3)` with 2 params → `2`, no error | STILL OPEN | kept |
-| [#4468](https://github.com/cybrid-systems/aura/issues/4468) `display` of vectors / floats | open | `<vector[0]>`, `0.123457`, `1.23457e+08` | STILL OPEN | kept |
-| [#4469](https://github.com/cybrid-systems/aura/issues/4469) `round` / `integer?` / missing conversions | open | `(round 2.5)` → 3, `(integer? 2.0)` → `#f`, `exact->inexact` / `truncate` unbound | STILL OPEN | kept |
-| [#4470](https://github.com/cybrid-systems/aura/issues/4470) `eqv?` / `memv` unbound | open | unbound at top level and in procedures | STILL OPEN | kept |
-| [#4471](https://github.com/cybrid-systems/aura/issues/4471) line numbers after first error | open | later diagnostics still report line 1 of the form | STILL OPEN | kept |
-| [#4472](https://github.com/cybrid-systems/aura/issues/4472) strings count bytes, `char?` | open | `(string-length "héllo")` → 6, `(char? 5)` → `#t`, radix ignored | STILL OPEN | kept |
-
-New at `b13af9334`: [#4473](https://github.com/cybrid-systems/aura/issues/4473) (only `cons` uses the #4459 pair freelist; `list` / `reverse` / `append` / `map` pairs grow the heap, 800 000 four-element lists: 233 MB vs 93 MB with `cons`) and [#4474](https://github.com/cybrid-systems/aura/issues/4474) (the #4459 reclaim marks the whole live heap every 128 allocations; Ch12 tests 75 s → 206 s, bisected to `dc88d4a66`).
+| [#4462](https://github.com/cybrid-systems/aura/issues/4462) ints in [2^62, 2^63) | closed | `(+ c c 2)` with c = 2^61−1 → `4611686018427387904.0`, no abort | FIXED | LCG unchanged |
+| [#4463](https://github.com/cybrid-systems/aura/issues/4463) arithmetic coerces non-numbers | closed | `(+ 1 #t)` / `(+ 1 "12abc")` → type-mismatch error | FIXED | `string->number` knobs kept |
+| [#4464](https://github.com/cybrid-systems/aura/issues/4464) per-call cost ∝ globals | closed, `8cd8fb8f7` | `spin 10000` N=0 vs 800: ~2.4× (pre-regression `02f03f341`: 2.5×; regressed `5cc915687`: 9.5×); host load ~40, absolute ms not comparable | FIXED (regression gone) | none |
+| [#4465](https://github.com/cybrid-systems/aura/issues/4465) error through user procedure skips rest, exit 0 | closed | `(id (car '()))` → diagnostic, later forms run, exit 1 | FIXED | `<error>` check kept |
+| [#4466](https://github.com/cybrid-systems/aura/issues/4466) `while` runs only first body | closed | multi-body `while` runs every form | FIXED | none |
+| [#4467](https://github.com/cybrid-systems/aura/issues/4467) no arity check | closed | `(f 1 2)` with 1 param → `arity mismatch` error | FIXED | none |
+| [#4468](https://github.com/cybrid-systems/aura/issues/4468) `display` of vectors / floats | closed | `#(1 2 3)`, `0.1234567891`, `123456789.0` | FIXED | `round-to` printing kept (stable output) |
+| [#4469](https://github.com/cybrid-systems/aura/issues/4469) `round` / `integer?` / conversions | closed | `(round 2.5)` → 2, `(round 0.5)` → 0, `(integer? 2.0)` → `#t`, `exact->inexact` / `truncate` bound | FIXED | none |
+| [#4470](https://github.com/cybrid-systems/aura/issues/4470) `eqv?` / `memv` unbound | closed | `(eqv? 1 1)` → `#t`, `memv` works | FIXED | `equal?` kept |
+| [#4471](https://github.com/cybrid-systems/aura/issues/4471) line numbers after first error | closed | second error reported at its own line (3:2) | FIXED | none |
+| [#4472](https://github.com/cybrid-systems/aura/issues/4472) strings count bytes, `char?` | closed, `52d31bd14` | `(string-length "强化")` → 2, `string-ref` returns code points, radix 2–36 honoured; `(char? 5)` stays `#t` by design (chars are fixnums, #4129) | FIXED | none |
+| [#4473](https://github.com/cybrid-systems/aura/issues/4473) `list` pairs bypass freelist | closed, `d89d39c56` | 800 000 `(list i i i i)`: 47 MB peak, same as `cons` | FIXED | `lib/rl/tuple.aura` removed; `list` / `reverse` used directly |
+| [#4474](https://github.com/cybrid-systems/aura/issues/4474) #4459 reclaim marks whole heap every 128 allocs | closed, `ab5c88870` | 200 000-pair live heap + 200 000 `list` allocs: 2.0 s vs 17 s at `d89d39c56` | FIXED | none |
 
 ## Bugs filed upstream / 已提 issue
 

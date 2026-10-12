@@ -6,14 +6,13 @@
 ; Policies for evaluation are stochastic: (policy s a) → probability.
 
 (require "rl/vec" all:)
-(require "rl/tuple" all:)
 
 (export dp-det dp-outcome dp-q dp-policy-eval! dp-value-iteration! dp-greedy-actions dp-greedy-action
         dp-policy-iteration!)
 
-; Outcome constructors (cons-built; see rl/tuple.aura for why not `list`).
-(define (dp-outcome p s2 r) (tup3 p s2 r))
-(define (dp-det s2 r) (cons (tup3 1.0 s2 r) '()))
+; Outcome constructors.
+(define (dp-outcome p s2 r) (list p s2 r))
+(define (dp-det s2 r) (list (list 1.0 s2 r)))
 
 ; q(s,a) = Σ p [r + γ v(s')]
 (define (dp-q model v s a gamma)

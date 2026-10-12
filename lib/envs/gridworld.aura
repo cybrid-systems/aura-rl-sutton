@@ -3,7 +3,6 @@
 ; Used by Ch3 (5×5 with A/B teleports) and Ch4 (4×4 with terminal corners).
 
 (require "rl/vec" all:)
-(require "rl/tuple" all:)
 
 (export gw-num-actions gw-di gw-dj gw-move gw-index gw-row gw-col
         gw-action-char gw-print-values gw-print-policy)
@@ -23,8 +22,8 @@
   (let ((ni (+ i (gw-di a)))
         (nj (+ j (gw-dj a))))
     (if (or (< ni 0) (>= ni rows) (< nj 0) (>= nj cols))
-        (tup3 i j #t)
-        (tup3 ni nj #f))))
+        (list i j #t)
+        (list ni nj #f))))
 
 (define (gw-action-char a)
   (cond ((= a 0) "^") ((= a 1) "v") ((= a 2) "<") (else ">")))

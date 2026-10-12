@@ -4,7 +4,6 @@
 ; Every step pays -1 until the goal. Actions: 0=up 1=down 2=left 3=right.
 
 (require "envs/gridworld" all:)
-(require "rl/tuple" all:)
 
 (export wg-rows wg-cols wg-start wg-goal wg-step)
 
@@ -23,4 +22,4 @@
          (ni (clip (- (+ i (gw-di a)) (vector-ref wg-wind j)) 0 (- wg-rows 1)))
          (nj (clip (+ j (gw-dj a)) 0 (- wg-cols 1)))
          (s2 (gw-index wg-cols ni nj)))
-    (tup3 s2 -1 (= s2 wg-goal))))
+    (list s2 -1 (= s2 wg-goal))))

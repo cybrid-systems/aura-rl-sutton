@@ -4,7 +4,6 @@
 ; walk, -1 for the 19-state walk of Ch7).
 
 (require "rl/rng" all:)
-(require "rl/tuple" all:)
 
 (export rw-start rw-step! rw-true-values)
 
@@ -13,9 +12,9 @@
 ; (rw-step! s n left-reward) → (list s' reward done?) ; moves left/right w.p. 1/2
 (define (rw-step! s n left-reward)
   (let ((s2 (if (= (rng-int! 2) 0) (- s 1) (+ s 1))))
-    (cond ((= s2 0) (tup3 0 left-reward #t))
-          ((= s2 (+ n 1)) (tup3 s2 1 #t))
-          (else (tup3 s2 0 #f)))))
+    (cond ((= s2 0) (list 0 left-reward #t))
+          ((= s2 (+ n 1)) (list s2 1 #t))
+          (else (list s2 0 #f)))))
 
 ; True values under the random policy (γ=1), vector of length n+2 (terminals 0).
 (define (rw-true-values n left-reward)

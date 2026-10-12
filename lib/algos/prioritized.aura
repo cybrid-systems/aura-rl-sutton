@@ -15,7 +15,6 @@
 
 (require "rl/rng" all:)
 (require "rl/vec" all:)
-(require "rl/tuple" all:)
 (require "algos/td" all:)
 (require "algos/dyna" all:)
 (require "envs/maze" all:)

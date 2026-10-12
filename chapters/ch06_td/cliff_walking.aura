@@ -30,9 +30,9 @@
                     (ep (+ i 1)))
                   #f))
             (run (+ k 1) q))
-          (tup-curve (vec-scale! curve (/ 1.0 runs)) last-q)))))
+          (list (vec-scale! curve (/ 1.0 runs)) last-q)))))
 
-(define (tup-curve a b) (cons a (cons b '())))
+(define (list a b) (cons a (cons b '())))
 
 (define (block-mean v lo hi)
   (let lp ((i lo) (acc 0.0))

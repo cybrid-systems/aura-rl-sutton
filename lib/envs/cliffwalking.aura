@@ -3,7 +3,6 @@
 ; Every other step: reward -1. Actions as in gridworld: 0=up 1=down 2=left 3=right.
 
 (require "envs/gridworld" all:)
-(require "rl/tuple" all:)
 
 (export cw-rows cw-cols cw-start cw-goal cw-step)
 
@@ -17,6 +16,6 @@
   (let* ((m (gw-move cw-rows cw-cols (gw-row cw-cols s) (gw-col cw-cols s) a))
          (ni (car m))
          (nj (cadr m)))
-    (cond ((and (= ni 3) (> nj 0) (< nj 11)) (tup3 cw-start -100 #f))
-          ((= (gw-index cw-cols ni nj) cw-goal) (tup3 cw-goal -1 #t))
-          (else (tup3 (gw-index cw-cols ni nj) -1 #f)))))
+    (cond ((and (= ni 3) (> nj 0) (< nj 11)) (list cw-start -100 #f))
+          ((= (gw-index cw-cols ni nj) cw-goal) (list cw-goal -1 #t))
+          (else (list (gw-index cw-cols ni nj) -1 #f)))))

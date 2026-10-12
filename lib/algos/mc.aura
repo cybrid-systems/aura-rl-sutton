@@ -10,7 +10,6 @@
 
 (require "rl/rng" all:)
 (require "rl/vec" all:)
-(require "rl/tuple" all:)
 (require "envs/blackjack" all:)
 
 (export mc-act-index mc-index-act mc-bj-predict! mc-bj-es! mc-bj-eps-soft!
@@ -52,7 +51,7 @@
             (mc-walk! (cadr res) (car res) step-state first-visit? sums counts)
             (ep (+ i 1)))
           #f))
-    (tup2 (averages sums counts) counts)))
+    (list (averages sums counts) counts)))
 
 (define (averages sums counts)
   (let ((v (make-vector (vector-length sums) 0.0)))
@@ -114,7 +113,7 @@
                       (imp (cdr t)))))
               (ep (+ i 1)))
             #f)))
-    (tup2 pi (averages sums counts))))
+    (list pi (averages sums counts))))
 
 ; ---------------------------------------------------------------------------
 ; On-policy first-visit MC control with an ε-soft policy (Sec 5.4).
@@ -134,7 +133,7 @@
               (mc-walk! (cadr res) (car res) sa-key #t sums counts)
               (ep (+ i 1)))
             #f)))
-    (tup2 (mc-bj-q->policy sums counts) (averages sums counts))))
+    (list (mc-bj-q->policy sums counts) (averages sums counts))))
 
 ; Greedy policy vector from Q sums/counts (ties → stick on 20/21, else hit).
 (define (mc-bj-q->policy sums counts)
@@ -196,7 +195,7 @@
           #f))
     (vec-scale! ord (/ 1.0 runs))
     (vec-scale! wis (/ 1.0 runs))
-    (tup2 ord wis)))
+    (list ord wis)))
 
 ; ---------------------------------------------------------------------------
 ; Infinite variance (Fig 5.4). One non-terminal state; `left` loops back with
@@ -207,9 +206,9 @@
   ; → (list reward rho)
   (let lp ((r 1.0))
     (if (= (rng-int! 2) 1)
-        (tup2 0 0.0)                       ; right: target never takes it
+        (list 0 0.0)                       ; right: target never takes it
         (if (< (rng-uniform!) 0.1)
-            (tup2 1 (* 2.0 r))
+            (list 1 (* 2.0 r))
             (lp (* 2.0 r))))))
 
 (define (mc-inf-var! episodes)

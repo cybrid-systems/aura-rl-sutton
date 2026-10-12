@@ -8,7 +8,6 @@
 
 (require "rl/rng" all:)
 (require "rl/vec" all:)
-(require "rl/tuple" all:)
 (require "envs/random-walk" all:)
 
 (export td-rw-rms! td-rw-values! q-get q-argmax q-argmax-tie! q-eps-greedy! q-max q-mean q-nmax
@@ -145,17 +144,17 @@
       (vector-set! q i (+ (vector-ref q i)
                           (* alpha (- (+ r (* gamma next)) (vector-ref q i)))))
       (if done
-          (tup2 (+ total r) (+ steps 1))
+          (list (+ total r) (+ steps 1))
           (lp s2 a2 (+ total r) (+ steps 1))))))
 
 ; Greedy rollout (first-max ties) → list of states, capped at max-steps.
 (define (td-greedy-path q step start nA max-steps)
   (let lp ((s start) (k 0) (acc (cons start '())))
     (if (>= k max-steps)
-        (tup-reverse acc)
+        (reverse acc)
         (let ((res (step s (q-argmax q nA s))))
           (if (car (cddr res))
-              (tup-reverse (cons (car res) acc))
+              (reverse (cons (car res) acc))
               (lp (car res) (+ k 1) (cons (car res) acc)))))))
 
 ; ---------------------------------------------------------------------------

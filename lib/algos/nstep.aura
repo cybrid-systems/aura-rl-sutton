@@ -13,7 +13,6 @@
 
 (require "rl/rng" all:)
 (require "rl/vec" all:)
-(require "rl/tuple" all:)
 (require "envs/random-walk" all:)
 (require "algos/td" all:)
 
@@ -161,7 +160,7 @@
               (vector-set! q i (+ (vector-ref q i) (* alpha (- g (vector-ref q i))))))
             #f)
         (if (and (>= T2 0) (>= tau (- T2 1)))
-            (tup2 total2 T2)
+            (list total2 T2)
             (lp (+ t 1) T2 total2))))))
 
 ; Mean reward per episode over runs. → vector of length episodes
@@ -283,7 +282,7 @@
                 (vector-set! q i (+ qi (* alpha (- g qi)))))))
         #f)
     (if (and (>= T2 0) (>= tau (- T2 1)))
-        (tup2 total2 T2)
+        (list total2 T2)
         (ns-off-loop method q step nA n m S A B SG R epsb epst sigma alpha gamma (+ t 1) T2 total2))))
 
 ; Return of the greedy policy (first-max ties) from start, capped at max-steps.

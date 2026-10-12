@@ -3,7 +3,6 @@
 ; Dealer sticks on 17+.
 
 (require "rl/rng" all:)
-(require "rl/tuple" all:)
 
 (export bj-draw! bj-hand-add bj-dealer-play! bj-outcome bj-play-episode! bj-play-from! bj-stick-20-policy
         bj-num-states bj-state-index)
@@ -17,8 +16,8 @@
          (s (+ sum (if as-eleven 11 card)))
          (u (or usable as-eleven)))
     (if (and (> s 21) u)
-        (tup2 (- s 10) #f)
-        (tup2 s u))))
+        (list (- s 10) #f)
+        (list s u))))
 
 ; Dealer from (sum usable): hit below 17. → final sum
 (define (bj-dealer-play! sum usable)
@@ -40,7 +39,7 @@
 ; Deal a fresh hand: player draws until sum >= 12 (decisions below 12 are trivial).
 (define (bj-deal-player sum usable)
   (if (>= sum 12)
-      (tup2 sum usable)
+      (list sum usable)
       (let ((h (bj-hand-add sum usable (bj-draw!))))
         (bj-deal-player (car h) (cadr h)))))
 
@@ -60,13 +59,13 @@
       (let ((a (policy sum usable show)))
         (if (eq? a 'hit)
             (let ((h (bj-hand-add sum usable (bj-draw!)))
-                  (t2 (cons (tup4 sum usable show a) traj)))
+                  (t2 (cons (list sum usable show a) traj)))
               (if (> (car h) 21)
-                  (tup2 -1 (tup-reverse t2))
+                  (list -1 (reverse t2))
                   (lp (car h) (cadr h) t2)))
             (let ((dealer (bj-dealer-play! (car d2) (cadr d2))))
-              (tup2 (bj-outcome sum dealer)
-                    (tup-reverse (cons (tup4 sum usable show a) traj)))))))))
+              (list (bj-outcome sum dealer)
+                    (reverse (cons (list sum usable show a) traj)))))))))
 
 ; Exploring-starts episode: start at (sum usable show), dealer hidden card drawn,
 ; first action is first-a ('hit / 'stick); later actions come from policy.
@@ -75,11 +74,11 @@
   (let* ((d (bj-hand-add 0 #f show))
          (d2 (bj-hand-add (car d) (cadr d) (bj-draw!))))
     (let lp ((sum sum0) (usable usable0) (a first-a) (traj '()))
-      (let ((t2 (cons (tup4 sum usable show a) traj)))
+      (let ((t2 (cons (list sum usable show a) traj)))
         (if (eq? a 'hit)
             (let ((h (bj-hand-add sum usable (bj-draw!))))
               (if (> (car h) 21)
-                  (tup2 -1 (tup-reverse t2))
+                  (list -1 (reverse t2))
                   (lp (car h) (cadr h) (policy (car h) (cadr h) show) t2)))
             (let ((dealer (bj-dealer-play! (car d2) (cadr d2))))
-              (tup2 (bj-outcome sum dealer) (tup-reverse t2))))))))
+              (list (bj-outcome sum dealer) (reverse t2))))))))

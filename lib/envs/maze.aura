@@ -8,7 +8,6 @@
 ; grid leaves the state unchanged. Reaching the goal pays +1 and ends the episode;
 ; every other transition pays 0.
 
-(require "rl/tuple" all:)
 
 (export maze-rows maze-cols maze-start maze-goal maze-goal? maze-nS maze-wall? maze-step maze-switch! maze-scale
         dyna-maze blocking-maze shortcut-maze maze->string)
@@ -48,7 +47,7 @@
          (c2 (if (= a 2) (max (- c 1) 0) (if (= a 3) (min (+ c 1) (- cols 1)) c)))
          (s2 (+ (* r2 cols) c2))
          (s3 (if (maze-wall? m s2) s s2)))
-    (if (maze-goal? m s3) (tup3 s3 1.0 #t) (tup3 s3 0.0 #f))))
+    (if (maze-goal? m s3) (list s3 1.0 #t) (list s3 0.0 #f))))
 
 ;
 ; Goal test: one goal cell, or the goal block of a scaled maze (slot 6).
