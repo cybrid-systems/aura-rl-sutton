@@ -1,30 +1,21 @@
-; rl/vec.aura — small float-vector helpers (no vector-map / vector-fill! in Aura std yet).
+; rl/vec.aura — small float-vector helpers. vec-fill! / vec-copy are kept as
+; names for the chapters; they are std/list vector-fill! / vector-copy (aura#4496).
 ;
 ; Loops are written as (if c (begin ... (lp ...)) #f) rather than (when c ...):
 ; before cybrid-systems/aura#4454 was fixed (695c58f5d) a self tail call inside
 ; when/unless/and/or overflowed the C stack. Both forms are fine now.
 
 (require "rl/rng" all:)
+(require "std/list" all:)
 
 (export vec-make vec-fill! vec-copy vec-sum vec-max vec-argmax vec-argmax-tie!
         vec-add-at! vec-scale! vec->string round-to fmt)
 
 (define (vec-make n x) (make-vector n x))
 
-(define (vec-fill! v x)
-  (let lp ((i 0))
-    (if (< i (vector-length v)) (begin
-      (vector-set! v i x)
-      (lp (+ i 1))) #f))
-  v)
+(define (vec-fill! v x) (vector-fill! v x))
 
-(define (vec-copy v)
-  (let ((out (make-vector (vector-length v) 0)))
-    (let lp ((i 0))
-      (if (< i (vector-length v)) (begin
-        (vector-set! out i (vector-ref v i))
-        (lp (+ i 1))) #f))
-    out))
+(define (vec-copy v) (vector-copy v))
 
 (define (vec-sum v)
   (let lp ((i 0) (s 0.0))

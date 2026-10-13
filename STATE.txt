@@ -1,6 +1,6 @@
 # aura-rl-sutton state (machine-readable, key=value)
 aura_repo=https://github.com/cybrid-systems/aura
-aura_tip=9058d36c4  # re-pinned 2026-10-12: all of #4453-#4474 closed and verified; 278 checks pass (RelWithDebInfo, Soft)
+aura_tip=72b452f75  # re-pinned 2026-10-13: aura#4496-#4499 fixed; vec-fill!/vec-copy use std vector-fill!/vector-copy; 278 checks pass (RelWithDebInfo, Soft)
 aura_build=RelWithDebInfo  # no CMAKE_BUILD_TYPE = unoptimized, 3-5x slower
 aura_face=soft  # AURA_SANDBOX=off AURA_PIPELINE_STRICT=0
 reference=https://github.com/ShangtongZhang/reinforcement-learning-an-introduction (read-only cross-check)
